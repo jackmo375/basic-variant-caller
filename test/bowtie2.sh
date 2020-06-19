@@ -10,7 +10,6 @@ source ../configs/parameters.cfg
 
 main()
 {
-
 	species=lambda-virus
 
 	# if the right index does not exist, build it:
@@ -20,7 +19,6 @@ main()
 	fi
 
 	## then chose and run a pipeline:
-
 	simple_align
 	#paired_end_align
 	#local_align
@@ -30,7 +28,6 @@ main()
 #
 #  functions
 #
-
 # build reference index
 build_index()
 {
@@ -66,6 +63,7 @@ local_align()
 		-U ${dat_dir}/reads/${species}_long.fq \
 		-S ${sam_dir}/${species}_local.sam
 }
+
 
 #
 #  run main
