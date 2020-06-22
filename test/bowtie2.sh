@@ -1,5 +1,7 @@
 #
-# testing the bowtie 2 aligner
+#	testing the bowtie 2 aligner
+#
+#	http://bowtie-bio.sourceforge.net/bowtie2/index.shtml
 #
 ##################################
 
