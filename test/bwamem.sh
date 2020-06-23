@@ -35,7 +35,6 @@ main()
 #
 build_index()
 {
-
 	# option -a specifies the algorithm, with arguments:
 	# 
 	# 1. 'is' is for short sequences (like virus genomes)
