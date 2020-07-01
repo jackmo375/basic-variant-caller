@@ -23,6 +23,7 @@ main()
 	# powered servers. OK. 
 
 	species=lambda-virus
+	threads=4
 
 	#sort_reference
 
@@ -48,11 +49,12 @@ paired_end_align()
 	${isaac}/isaac-align \
 		-r ${dat_dir}/references/${species}.fa \
 		-b ${dat_dir}/reads/${species}-short \
-		-m 8 \
+		-m 60 \
+		-j 6 \
 		-f fastq \
 		-t ${tmp_dir} \
 		--verbosity=3 \
-		-o ${dat_dir}/aligned		
+		-o ${dat_dir}/aligned
 }
 
 #
