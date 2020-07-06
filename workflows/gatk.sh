@@ -10,8 +10,9 @@ source ../configs/parameters.cfg
 
 workflow() {
 
-	species=lambda-virus
+	species=lambda_virus
 	threads=1
+	read_type=pe # pe: paried end; sr: single_read
 
 	custom_call build_index "building alignment index..."
 
@@ -19,7 +20,11 @@ workflow() {
 
 	custom_call build_varcall_dict "building variant caller dictionary"
 
-	custom_call single_read_align "aligning reads to the reference..."
+	if [[ ${read_type} == 'pe' ]]; then 
+		custom_call paired_end_align "aligning paired-end reads with bwa..."
+	else
+		custom_call single_read_align "aligning reads to the reference..."
+	fi
 
 	custom_call sam_to_bam "converting sam files to bam format..."
 
@@ -114,15 +119,28 @@ single_read_align()
 		${dat_dir}/indices/${species}.bwa \
 		${dat_dir}/reads/${species}_1.fq \
 		-R "@RG\tID:FLOWCELL1.LANE1\tPL:ILLUMINA\tLB:LIB-DAD-1\tSM:DAD\tPI:200" \
-		> ${sam_dir}/${species}.bwa.sr.sam
+		> ${sam_dir}/${species}.bwa.${read_type}.sam
+}
+
+paired_end_align()
+{
+	echo 'aligning paired-end reads with bwa...'
+
+	${bwa}/bwa mem \
+		${dat_dir}/indices/${species}.bwa \
+		${dat_dir}/reads/${species}_1.fq \
+		${dat_dir}/reads/${species}_2.fq \
+		-R "@RG\tID:FLOWCELL1.LANE1\tPL:ILLUMINA\tLB:LIB-DAD-1\tSM:DAD\tPI:200" \
+		> ${sam_dir}/${species}.bwa.${read_type}.sam
+
 }
 
 sam_to_bam()
 {
 	${samtools} view \
 		-S \
-		-b ${sam_dir}/${species}.bwa.sr.sam \
-		> ${bam_dir}/${species}.bwa.sr.bam
+		-b ${sam_dir}/${species}.bwa.${read_type}.sam \
+		> ${bam_dir}/${species}.bwa.${read_type}.bam
 }
 
 sort_sam()
@@ -134,9 +152,9 @@ sort_sam()
 	# actually sort bam files. That's fine. 
 
 	java -jar ${picard} SortSam \
-      I=${bam_dir}/${species}.bwa.sr.bam \
-      O=${bam_dir}/${species}.bwa.sr.sorted.bam \
-      SORT_ORDER=coordinate
+		I=${bam_dir}/${species}.bwa.${read_type}.bam \
+		O=${bam_dir}/${species}.bwa.${read_type}.sorted.bam \
+		SORT_ORDER=coordinate
 }
 
 mark_duplicates()
@@ -146,23 +164,23 @@ mark_duplicates()
 	# https://gatk.broadinstitute.org/hc/en-us/articles/360037052812-MarkDuplicates-Picard-
 
 	java -jar ${picard} MarkDuplicates \
-      I=${bam_dir}/${species}.bwa.sr.sorted.bam \
-      O=${bam_dir}/${species}.bwa.sr.marked.bam \
-      M=${bam_dir}/${species}.bwa.sr.marked_dup_metrics.txt
+		I=${bam_dir}/${species}.bwa.${read_type}.sorted.bam \
+		O=${bam_dir}/${species}.bwa.${read_type}.marked.bam \
+		M=${bam_dir}/${species}.bwa.${read_type}.marked_dup_metrics.txt
 
 }
 
 validate_bam()
 {
 	java -jar $picard ValidateSamFile \
-		I=${bam_dir}/${species}.bwa.sr.marked.bam \
+		I=${bam_dir}/${species}.bwa.${read_type}.marked.bam \
 		MODE=SUMMARY
 }
 
 index_bam()
 {
 	$samtools index \
-		${bam_dir}/${species}.bwa.sr.marked.bam
+		${bam_dir}/${species}.bwa.${read_type}.marked.bam
 
 }
 
@@ -173,8 +191,8 @@ call_variants()
 
 	$gatk --java-options "-Xmx4g" HaplotypeCaller  \
 		-R ${dat_dir}/references/${species}.fa \
-		-I ${bam_dir}/${species}.bwa.sr.marked.bam \
-		-O ${vcf_dir}/${species}.raw.g.vcf
+		-I ${bam_dir}/${species}.bwa.${read_type}.marked.bam \
+		-O ${vcf_dir}/${species}.bwa.${read_type}.raw.g.vcf
 }
 
 custom_call()
