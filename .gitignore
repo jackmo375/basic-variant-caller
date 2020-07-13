@@ -1,2 +1,13 @@
 data
-tools
+temp
+
+tools/bcftools*
+tools/bowtie*
+tools/bwa*
+tools/cromwell*
+tools/gatk*
+tools/gmap*
+tools/Isaac*
+tools/picard*
+tools/samtools*
+tools/stampy*

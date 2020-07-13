@@ -1,5 +1,6 @@
 #
-#	testing the gatk variant caller pipeline
+#	comparing truth and estimated vcf files
+#	for simulated SNP+indel data
 #
 #	we are using this workflow for inspiration:
 #	https://github.com/gatk-workflows/gatk4-germline-snps-indels/blob/master/haplotypecaller-gvcf-gatk4.wdl
@@ -11,8 +12,10 @@ source ../configs/parameters.cfg
 workflow() {
 
 	species=lambda_virus
-	threads=1
+	threads=8
 	read_type=pe # pe: paried end; sr: single_read
+
+	custom_call simulate_reads "simulating reads..."
 
 	custom_call build_index "building alignment index..."
 
@@ -34,17 +37,34 @@ workflow() {
 
 	custom_call validate_bam "validating bam files..."
 
-	# for this short tutorial we will skip the recalibration of base quality scores. 
+	# for now we will skip the recalibration of base quality scores. 
 
 	custom_call index_bam "indexing all input bam files..."
 
 	custom_call call_variants "calling variants..."
+
+	custom_call compare_truth_est_vcf "comparing the simulation's truth vcf file against the variant caller output..."
+
+	custom_call jaccard_index "computing jaccard index..."
 }
 
 
 #
 #  tasks
 #
+simulate_reads()
+{
+	perl ${simulate} \
+		--ref=${ref_dir}/${species}.fa \
+		--prefix=${rds_dir}/${species} \
+		--input ./simulate-ini.json \
+		--output_vcf ${vcf_dir}/${species}.truth.vcf
+
+	$bcftools sort \
+		${vcf_dir}/${species}.truth.vcf \
+		-o ${vcf_dir}/${species}.truth.sorted.vcf
+}
+
 build_index()
 {
 	# option -a specifies the algorithm, with arguments:
@@ -54,7 +74,7 @@ build_index()
 
 
 	if [[ ! -f "${dat_dir}/indices/${species}.bwa.amb" ]]; then
-		${bwa}/bwa index \
+		$bwa index \
 			-p ${dat_dir}/indices/${species}.bwa \
 			-a is \
 			${dat_dir}/references/${species}.fa
@@ -115,10 +135,11 @@ single_read_align()
 	# this means, but there is information here:
 	# https://gatkforums.broadinstitute.org/gatk/discussion/6472/read-groups
 
-	${bwa}/bwa mem \
+	$bwa mem \
 		${dat_dir}/indices/${species}.bwa \
 		${dat_dir}/reads/${species}_1.fq \
 		-R "@RG\tID:FLOWCELL1.LANE1\tPL:ILLUMINA\tLB:LIB-DAD-1\tSM:DAD\tPI:200" \
+		-t $threads \
 		> ${sam_dir}/${species}.bwa.${read_type}.sam
 }
 
@@ -126,11 +147,12 @@ paired_end_align()
 {
 	echo 'aligning paired-end reads with bwa...'
 
-	${bwa}/bwa mem \
+	${bwa} mem \
 		${dat_dir}/indices/${species}.bwa \
 		${dat_dir}/reads/${species}_1.fq \
 		${dat_dir}/reads/${species}_2.fq \
 		-R "@RG\tID:FLOWCELL1.LANE1\tPL:ILLUMINA\tLB:LIB-DAD-1\tSM:DAD\tPI:200" \
+		-t $threads \
 		> ${sam_dir}/${species}.bwa.${read_type}.sam
 
 }
@@ -190,9 +212,63 @@ call_variants()
 	# doesn't seem to work for a single sample? Not sure...
 
 	$gatk --java-options "-Xmx4g" HaplotypeCaller  \
+		--native-pair-hmm-threads $threads \
 		-R ${dat_dir}/references/${species}.fa \
 		-I ${bam_dir}/${species}.bwa.${read_type}.marked.bam \
 		-O ${vcf_dir}/${species}.bwa.${read_type}.raw.g.vcf
+}
+
+compare_truth_est_vcf()
+{
+	# compare truth and estimated vcf files
+	# truth:     vcf file produced by the simulator
+	# estimated: vcf file produced by the variant caller
+
+	# need tozip the vcf files, because bcf tools only accepts
+	# gzipped inputs
+
+	echo "zipping vcf files"
+	$bcftools view \
+		${vcf_dir}/${species}.bwa.${read_type}.raw.g.vcf \
+		-Oz \
+		-o ${vcf_dir}/${species}.bwa.${read_type}.raw.g.vcf.gz
+
+	$bcftools view \
+		${vcf_dir}/${species}.truth.sorted.vcf \
+		-Oz \
+		-o ${vcf_dir}/${species}.truth.sorted.vcf.gz
+
+	echo "building indices for the zipped vcf files"
+	$bcftools index ${vcf_dir}/${species}.bwa.${read_type}.raw.g.vcf.gz
+	$bcftools index ${vcf_dir}/${species}.truth.sorted.vcf.gz
+
+	echo "computing the set difference and intersection vcf files"
+	$bcftools isec \
+		${vcf_dir}/${species}.bwa.${read_type}.raw.g.vcf.gz \
+		${vcf_dir}/${species}.truth.sorted.vcf.gz \
+		-p ${vcf_dir}/compare	
+}
+
+jaccard_index() {
+	# compute the jaccard index from the output of
+	# bcftools isec
+	# assumes:
+	#	0000, 0001 are set difference files, and
+	#	0002, 0003 are intersection files
+
+	prefix=compare
+
+	$gatk CountVariants \
+		-V ${vcf_dir}/$prefix/0000.vcf > ${tmp_dir}/$prefix.txt
+	$gatk CountVariants \
+		-V ${vcf_dir}/$prefix/0001.vcf >> ${tmp_dir}/$prefix.txt
+	$gatk CountVariants \
+		-V ${vcf_dir}/$prefix/0002.vcf >> ${tmp_dir}/$prefix.txt
+	$gatk CountVariants \
+		-V ${vcf_dir}/$prefix/0003.vcf >> ${tmp_dir}/$prefix.txt
+
+	python $jaccard \
+		--input ${tmp_dir}/$prefix.txt
 }
 
 
