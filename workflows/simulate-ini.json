@@ -1,11 +1,11 @@
 {
 	"has_snps"	: 1,
-	"psnp"		: 0.0005,
-	"has_indels": 0,
-	"findel"	: 0.00006,
+	"psnp"		: 0.0012,
+	"has_indels": 1,
+	"findel"	: 0.0002,
 	"has_rearr"	: 0,
 	"nrearr_av"	: 3,
 	"nreads"	: 10000,
-	"rdlen_av"	: 1000,
+	"rdlen_av"	: 75,
 	"rdlen_min"	: 40
 }

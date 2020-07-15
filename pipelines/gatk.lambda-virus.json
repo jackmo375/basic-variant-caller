@@ -1,0 +1,5 @@
+{
+  "species": "lambda_virus",
+  "threads": 8,
+  "read_type": "pe"
+}
