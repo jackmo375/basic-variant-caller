@@ -1,5 +1,18 @@
-data
 temp
+
+data/bam*
+data/fastqc*
+data/reads*
+data/sam*
+data/vcf*
+data/references*.bwa.*
+data/references*.dict
+data/references*.fai
+data/references*.bwt
+data/references*.pac
+data/references*.amb
+data/references*.ann
+data/references*.sa
 
 tools/bcftools*
 tools/bowtie*
