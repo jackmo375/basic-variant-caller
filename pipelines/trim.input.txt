@@ -1,0 +1,1 @@
+/home/jack/Local/GeneMap/basic-variant-caller/data/reads/lambda-virus_1.fq /home/jack/Local/GeneMap/basic-variant-caller/data/reads/lambda-virus_2.fq paired/lambda-virus_1.fq_fp.fq.gz unpaired/lambda-virus_1.fq_fu.fq.gz paired/lambda-virus_2.fq_rp.fq.gz unpaired/lambda-virus_2.fq_ru.fq.gz

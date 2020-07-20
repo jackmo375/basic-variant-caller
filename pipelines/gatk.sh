@@ -1,13 +1,19 @@
 #
-#	comparing truth and estimated vcf files
-#	for simulated SNP+indel data
+#  gatk
+#
+#	simple pipeline for
+#		+ simulated SNP & indel data
+#		+ short virus genomes
+#
+#	Jack Morrice
 #
 #	we are using this workflow for inspiration:
 #	https://github.com/gatk-workflows/gatk4-germline-snps-indels/blob/master/haplotypecaller-gvcf-gatk4.wdl
 #
 ###############################################
 
-source ../configs/parameters.cfg
+source ../includes/locations.sh
+source ../includes/utilities.sh
 
 workflow() { argv=("$@")
 	
@@ -22,12 +28,6 @@ workflow() { argv=("$@")
 	read_type=$(value_from_json $input_json '.read_type')
 
 	# execute workflow steps
-
-	custom_call build_index "building alignment index..."
-
-	custom_call build_varcall_index "building variant caller index..."
-
-	custom_call build_varcall_dict "building variant caller dictionary"
 
 	if [[ ${read_type} == 'pe' ]]; then 
 		custom_call paired_end_align "aligning paired-end reads with bwa..."
@@ -55,63 +55,6 @@ workflow() { argv=("$@")
 #
 #  tasks
 #
-build_index()
-{
-	# option -a specifies the algorithm, with arguments:
-	# 
-	# 1. 'is' is for short sequences (like virus genomes)
-	# 2. 'bwtsw' is for long sequences (like human genomes)
-
-
-	if [[ ! -f "${dat_dir}/indices/${species}.bwa.amb" ]]; then
-		$bwa index \
-			-p ${dat_dir}/indices/${species}.bwa \
-			-a is \
-			${dat_dir}/references/${species}.fa
-	else
-		printf "${green}skipping index build as index already exists${nc}"; echo
-	fi
-	
-}
-
-build_varcall_index() 
-{
-	# the gatk haplotype variant caller requires a dictionary and an index 
-	# are both built from the reference. this function builds the index 
-	# which I think is different from the alignment index?
-	#
-	# http://www.htslib.org/doc/samtools-faidx.html
-	# https://gatkforums.broadinstitute.org/gatk/discussion/1601/how-can-i-prepare-a-fasta-file-to-use-as-reference
-
-	if [[ ! -f "${dat_dir}/references/${species}.fai" ]]; then
-		$samtools faidx \
-			${dat_dir}/references/${species}.fa \
-			> ${dat_dir}/references/${species}.fai
-	else
-		printf "${green}skipping varcall index build as this index already exists${nc}"; echo
-	fi
-
-}
-
-build_varcall_dict()
-{
-	# the gatk haplotype variant caller requires a dictionary and an index 
-	# are both built from the reference. this function builds the dictionary 
-	# which I think is different from the alignment index?
-	#
-	# https://gatkforums.broadinstitute.org/gatk/discussion/1601/how-can-i-prepare-a-fasta-file-to-use-as-reference
-	# https://gatk.broadinstitute.org/hc/en-us/articles/360037068312-CreateSequenceDictionary-Picard-
-
-	if [[ ! -f "${dat_dir}/references/${species}.dict" ]]; then
-		java -jar $picard CreateSequenceDictionary \
-			R=${dat_dir}/references/${species}.fa \
-			O=${dat_dir}/references/${species}.dict
-	else
-		printf "${green}skipping varcall dictionary build as this dictionary already exists${nc}"; echo
-	fi
-
-}
-
 single_read_align()
 {
 	# basic usage: bwa mem [options] <idxbase> <in1.fq> [in2.fq]
@@ -126,7 +69,7 @@ single_read_align()
 	# https://gatkforums.broadinstitute.org/gatk/discussion/6472/read-groups
 
 	$bwa mem \
-		${dat_dir}/indices/${species}.bwa \
+		${ref_dir}/${species}.bwa \
 		${dat_dir}/reads/${species}_1.fq \
 		-R "@RG\tID:FLOWCELL1.LANE1\tPL:ILLUMINA\tLB:LIB-DAD-1\tSM:DAD\tPI:200" \
 		-t $threads \
@@ -135,10 +78,8 @@ single_read_align()
 
 paired_end_align()
 {
-	echo 'aligning paired-end reads with bwa...'
-
 	${bwa} mem \
-		${dat_dir}/indices/${species}.bwa \
+		${ref_dir}/${species}.bwa \
 		${dat_dir}/reads/${species}_1.fq \
 		${dat_dir}/reads/${species}_2.fq \
 		-R "@RG\tID:FLOWCELL1.LANE1\tPL:ILLUMINA\tLB:LIB-DAD-1\tSM:DAD\tPI:200" \
@@ -203,7 +144,7 @@ call_variants()
 
 	$gatk --java-options "-Xmx4g" HaplotypeCaller  \
 		--native-pair-hmm-threads $threads \
-		-R ${dat_dir}/references/${species}.fa \
+		-R ${ref_dir}/${species}.fa \
 		-I ${bam_dir}/${output_label}.marked.bam \
 		-O ${vcf_dir}/${output_label}.raw.g.vcf
 }

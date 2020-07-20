@@ -11,6 +11,7 @@ bam_dir=${dat_dir}/bam
 vcf_dir=${dat_dir}/vcf
 rds_dir=${dat_dir}/reads
 ref_dir=${dat_dir}/references
+fqc_dir=${dat_dir}/fastqc
 
 pip_dir=${pro_dir}/pipelines
 
@@ -25,31 +26,6 @@ isaac=${tls_dir}/Isaac4/build/bin
 gatk=${tls_dir}/gatk-4.1.7.0/gatk
 picard=${tls_dir}/picard-2.23.1/picard.jar
 simulate=${tls_dir}/simulate-0.1/simulate.pl
+fastqc=${tls_dir}/fastqc/fastqc
 
 jaccard=${tls_dir}/jaccard/jaccard.py
-
-## output formatting
-red='\033[0;31m'
-green='\033[0;32m'
-nc='\033[0m' # No Color
-
-# generic useful functions
-custom_call()
-{
-	# call tasks above with colored output
-	# and terminate the workflow on errors
-
-	printf "${green}$2${nc}"; echo
- 
-	$1 \
-		|| { printf "${red}...failed!${nc}"; echo; exit 1; } \
-		&& { printf "${green}...done."${nc}; echo;}
-}
-
-value_from_json() {
-	file=$1		# path of input json file
-	key=$2		# data field/key of {key, value} in the file
-	
-	# echo the value, removing any quotation marks if present
-	echo $(sed -e 's/^"//' -e 's/"$//' <<<"$(cat $file | jq $key)")
-}
