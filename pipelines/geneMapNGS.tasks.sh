@@ -1,197 +1,67 @@
-###-------------------------------------------- Define functions ----------------------------------------###
+#
+#  function library for geneMapNGS pipeline
+#
+#	Kevin Esoh
+#
+#	contents:
+#		1. command functions
+#			*these functions are called at the top level
+#			by the pipeline scripts*
+#		2. check functions
+#			*these functions check that the necessary 
+#			files exist for the command functions to run
+#			properly (called by the command functions 
+#			themselves; not called at pipeline level).*
+#		3. prep functions
+#			*these functions prepare the user's project
+#			directory for the command functions to run
+#			(again, called by the command functions 
+#			themselves; not called at pipeline level)*
+#
+###############################################
 
-#--- Check References and their indixes
-function check_ref() {
-       if [[ "$ref" == NULL ]]; then
-          echo -e "\e[38;5;1mERROR\e[0m: -r,--ref not provided! Exiting..."; 1>&2;
-          exit 1
-       elif [ ! -f "$ref" -o ! -s "$ref" ]; then
-          echo -e "\e[38;5;1mERROR\e[0m: Problem with reference file. Please check that it exists and is not empty..."; 1>&2;
-          exit 1
-       fi
-}
-function check_bwa_idx() {
-       check_ref
-       if [[ ! -f "${ref}.bwt" ]]; then
-            $bwa index $ref
-       fi
-}
-function check_gatk_dict() {
-       check_ref
-       #--- Create a reference dictionary if it does not exist
-       if [[ ! -f "${ref/.fasta/.dict}" ]]; then
-          $gatk CreateSequenceDictionary -R $ref
-       fi
-}
-function check_samtools_fai() {
-       check_ref
-       if [[ ! -f "${ref/.fasta/.fai}" ]]; then
-          $samtools faidx $ref
-       fi
-}
-
-#--- Check additional [optional] references (Known sites) for IndelRealignment, BQSR, and VQSR
-function check_sites() {
-    nks=$(echo $ks | sed 's/,/ --known /g')
-    echo "--known $nks" > rtc.ks.txt
-    nks=$(echo $ks | sed 's/,/ -known /g')
-    echo "-known $nks" > ir.ks.txt
-    nks=$(echo $ks | sed 's/,/ --known-sites /g')
-    echo "--known-sites $nks" > bqsr.ks.txt
-}
-
-#--- Check trimmomatic adapters
-function checkadapter() {
-    function warning() {
-        echo -e """\e[38;5;3mWARNING\e[0m: The adapter was not found! Make sure it is present in the current directory""" 1>&2;
-        echo -e """\e[38;5;6m===>\e[0m Attempting to trim without adapter. Press \e[38;5;6mCTRL+C\e[0m to stop\n""" 1>&2;
-        exit 1;
-
-    }
-    case "$(echo "$adap" | tr [:lower:] [:upper:])" in
-        NP) if [[ -e "NexteraPE-PE.fa" ]]; then echo ILLUMINACLIP:NexteraPE-PE.fa:2:30:10; else warning; fi ;;
-        T3U) if [[ -e "TruSeq3-PE-2.fa" ]]; then echo ILLUMINACLIP:TruSeq3-PE-2.fa:2:30:10;  else warning; fi ;;
-        T2P) if [[ -e "TruSeq2-PE.fa" ]]; then echo ILLUMINACLIP:TruSeq2-PE.fa:2:30:10;  else warning; fi ;;
-        T3P) if [[ -e "TruSeq3-PE.fa" ]]; then echo ILLUMINACLIP:TruSeq3-PE.fa:2:30:10;  else warning; fi ;;
-        T2S) if [[ -e "TruSeq2-SE.fa" ]]; then echo ILLUMINACLIP:TruSeq2-SE.fa:2:30:10;  else warning; fi ;;
-        T3S) if [[ -e "TruSeq3-SE.fa" ]]; then echo ILLUMINACLIP:TruSeq3-SE.fa:2:30:10;  else warning; fi ;;
-         *) echo -e """\e[38;5;3mWARNING\e[0m: No such adapter '$adap'! Type --help for usage\n\e[38;5;6m===>\e[0m Attempting to trim without adapter. Press \e[38;5;6mCTRL+C\e[0m to stop\n""" 1>&2; exit 1; ;;
-    esac
+function start() {
+    echo -e """
+               ===================================================================
+               \e[38;5;43mGeneMAP NGS Pipeline			          GeneMAP (c) 2020\e[0m
+               -------------------------------------------------------------------
+               Argument:            Parameter
+               --------             --------
+               Fastq/SAM/BAM path:  $dname
+               reference:           $ref
+	       	   dbsnp:		        $dbsnp
+               leading:             $leadx
+               trailing:            $trailx
+               PED file:            $ped
+               threads:             $t
+               adapter:             $adap
+               sample file:         $meta
+               BAM list:            $blist
+               GVCF list:           $glist
+               known sites:         $ks
+               outFile:             ${out}.vcf.gz
+               ===================================================================
+               Starting NGS Pipeline. Please wait...
+    """
 }
 
-#--- Check sample file
-function check_sample() {
-   if [[ "$meta" == NULL ]]; then
-      echo -e "\e[38;5;1mERROR\e[0m: -s,--sample_list not provided! Exiting..."; 1>&2;
-      exit 1
-   elif [ -f $meta -a -s $meta ]; then
-        for i in $(awk '{print $1}' $meta); do
-           if [ ! -f ${dname}$i ]; then
-	      echo -e "\e[38;5;1mERROR\e[0m: '${i}' was not found in the directory '${dname}'.\nPlease specify the path with -p or --path or check that the files in the path are the same in the sample list" 1>&2;
-              exit 1;
-           elif [ -f ${dname}${i} -a ! -s ${dname}${i} ]; then
-              echo -e "\e[38;5;1mERROR\e[0m: '${i}' may be empty. Please check and correct '${dname}'." 1>&2;
-              exit 1;
-           fi
-        done
-   elif [ -f $meta -a ! -s $meta ]; then
-        echo -e "\e[38;5;1mERROR\e[0m: '$meta' seems to be empty! Please check and correct." 1>&2;
-   fi
-}
-
-#--- Check Fastq/SAM/BAM and make input files
-function checkfq() {
-    #--- Make input files from forward/reverse runs or SAM/BAM files
-    for i in ${dname}*_1.fastq* ${dname}*_R1*.fastq* ${dname}*_1.fq* ${dname}*_R1*.fq* ${dname}*.1.fq* ${dname}*.R1.fq* ${dname}*.sam ${dname}*.bam; do
-        if [[ -e $i ]]; then
-           basename $i;
-        fi
-    done > fwd.txt
-    if [[ ! -s "fwd.txt" ]]; then
-       echo -e "\n\e[38;5;1mERROR\e[0m: No fastq/SAM/BAM file found in the specified location: '$dname'\nPlease specify path to Fastq/SAM/BAM files using -p or --path\n"
-       rm fwd.txt 1>&2;
-       exit 1;
-    fi
-
-    for i in ${dname}*_2.fastq* ${dname}*_R2*.fastq* ${dname}*_2.fq* ${dname}*_R2*.fq* ${dname}*.2.fq* ${dname}*.R2.fq*; do
-        if [[ -e $i ]]; then
-           basename $i;
-        fi
-    done > rev.txt
-     if [[ ! -s "rev.txt" ]]; then
-        cp fwd.txt forward_reverse.txt
-        awk -v d="${dname}" '{print d$1}' forward_reverse.txt > fastq.input.txt
-     else
-        paste fwd.txt rev.txt | awk '{print $1,$2}' > forward_reverse.txt
-        awk -v d="${dname}" '{print d$1,d$2}' forward_reverse.txt > fastq.input.txt
-     fi
-    rm fwd.txt rev.txt
-}
-
-###-------------------------------------------- Input Prep Functions ----------------------------------------###
-
-#--- Check if Fastq files are present and make trim input files
-function preptrim() {
-    checkfq
-    #--- On checking for fastq files above, we checked for SAM/BAM as well. If the function picked SAM/BAM, we definitely wanna spill errors since we can't trim SAM/BAM here
-    for i in $(awk '{print $1}' forward_reverse.txt | head -1); do
-        if [[ ( ${i} == *.sam ) || ( ${i} == *.sam.gz ) || ( "${i}" == *.bam ) ]]; then
-           echo -e "\n\e[38;5;1mERROR\e[0m: No fastq/SAM/BAM file found in the specified location: '$dname'\nPlease specify path to Fastq/SAM/BAM files using -p or --path\n" 1>&2;
-           exit 1;
-           rm forward_reverse.txt fastq.input.txt
-        fi
-    done
-    mkdir -p paired
-    awk -v d="${dname}" '{print d$1,d$2,"paired/"$1"_fp.fq.gz","unpaired/"$1"_fu.fq.gz","paired/"$2"_rp.fq.gz","unpaired/"$2"_ru.fq.gz"}' forward_reverse.txt > trim.input.txt
-    #rm forward_reverse.txt fastq.input.txt;
-}
-
-#--- Prepare alignment/mapping input
-function prepmap() {
-   check_ref; checkfq; preptrim
-   if [ -e "forward_reverse.txt" -a -s "forward_reverse.txt" ]; then
-      awk -v d="$dname" '{print d$1,d$2,"-o","aligned/"$1".sam"}' forward_reverse.txt > align.input.txt
-      #rm trim.input.txt
-   else
-      echo -e "\n\e[38;5;1mERROR\e[0m: Please check that there are fastq files in the path...\n"
-   fi
-}
-
-#--- Prepare input for BQSR
-function check_bamlist() {
-if [[ "$blist" == NULL ]]; then
-   if [ -f "bam.list" ]; then
-      rm bam.list;
-   fi;
-   for i in *.bam; do
-      if [[ ( -f ${i} ) && ( -s ${i} ) ]]; then  # if bam files exist in the current directory and are not empty
-         basename -a $(ls $i) >> bam.list;
-      elif [[ -d aligned ]]; then # if a directory exists called aligned
-         for j in aligned/*.bam; do
-             if [[ ( -f ${j} ) && ( -s ${j} ) ]]; then # if bam files exist in the aligned directory and are not empty
-                basename -a $(ls $j) >> bam.list;
-             fi;
-         done;
-      else
-         echo -e "\n\e[38;5;1mERROR\e[0m: Please check that there are bam files in the path $dname\n" 1>&2;
-	 exit 1;
-      fi;
-   done;
-   if [ -f "bam.list" -a -s "bam.list" ]; then
-      echo -e "\n\e[38;5;6mNOTE\e[0m: $(cat bam.list | wc -l) BAM file(s) counted in '$(readlink -f $(dirname $(cat bam.list | head -1)))/' and will be used! Press CTRL+C to stop\n";
-      sleep 1;
-   fi;
-fi
-}
-
-#--- Prepare input for BQSR
-function check_gvcflist() {
-if [[ ( "$glist" == NULL ) ]]; then
-   if [ -f "gvcf.list" ]; then
-      rm gvcf.list;
-   fi;
-   for i in *.gvcf*; do
-      if [[ ( -f ${i} ) && ( -s ${i} ) ]]; then  # if gvcf files exist in the current directory and are not empty
-         basename -a $(ls $i) >> gvcf.list;
-      elif [[ -d vcall ]]; then # if a directory exists called vcall
-         for j in vcall/*.gvcf*; do
-             if [[ ( -f ${j} ) && ( -s ${j} ) ]]; then # if gvcf files exist in the vcall directory and are not empty
-                basename -a $(ls $j) >> gvcf.list;
-             fi;
-         done;
-      else
-         echo -e "\n\e[38;5;1mERROR\e[0m: Please check that there are GVCF files in the path $dname\n" 1>&2;
-         #exit 1;
-      fi;
-   done;
-   if [ -f "gvcf.list" -a -s "gvcf.list" ]; then
-      echo -e "\n\e[38;5;6mNOTE\e[0m: $(cat gvcf.list | wc -l) GVCF file(s) counted in '$(readlink -f $(dirname $(cat gvcf.list | head -1)))/' and will be used! Press CTRL+C to stop\n";
-      sleep 1;
-   fi;
-fi
-}
-
-###-------------------------------------------- Command Functions ----------------------------------------###
+#
+#  1. command functions
+#
+#  summary:
+#	+ fq(), pfq()
+#	+ trim(), ptrim()
+#	+ bmap(), pbmap()
+#	+ gmap(), pgmap()
+#	+ indelreal(), pindelreal()
+#	+ bqsr(), pbqsr()
+#	+ emit_gvcfs(), pemit_gvcfs()
+#	+ combinegvcfs()
+#	+ genogvcfs()
+#	+ varcall()
+#	+ vqsr()
+#	+ bcfcall()
+#	
 
 #--- FastQC
 function fq() {
@@ -734,28 +604,217 @@ function bcfcall() {
 #      for i in $id out.vcf.gz; do if [[ -e "${i}" ]]; then rm $i; fi; done
 }
 
-###------------------------------------------------------ Usage Fnctions ----------------------------------------------------###
-function start() {
-    echo -e """
-               ===================================================================
-               \e[38;5;43mGeneMAP NGS Pipeline			          GeneMAP (c) 2020\e[0m
-               -------------------------------------------------------------------
-               Argument:            Parameter
-               --------             --------
-               Fastq/SAM/BAM path:  $dname
-               reference:           $ref
-	       dbsnp:		    $dbsnp
-               leading:             $leadx
-               trailing:            $trailx
-               PED file:            $ped
-               threads:             $t
-               adapter:             $adap
-               sample file:         $meta
-               BAM list:            $blist
-               GVCF list:           $glist
-               known sites:         $ks
-               outFile:             ${out}.vcf.gz
-               ===================================================================
-               Starting NGS Pipeline. Please wait...
-    """
+
+#
+#  2. check functions
+#
+#	summary:
+#	+ check_ref()
+#	+ check_bwa_idx()
+#	+ check_gatk_dict()
+#	+ check_samtools_fai()
+#	+ check_sites()
+#	+ check_adapter()
+#	+ check_sample()
+#	+ checkfq()
+#	+ check_bamlist()
+#	+ check_gvcflist()
+#
+
+#--- Check References and their indixes
+function check_ref() {
+       if [[ "$ref" == NULL ]]; then
+          echo -e "\e[38;5;1mERROR\e[0m: -r,--ref not provided! Exiting..."; 1>&2;
+          exit 1
+       elif [ ! -f "$ref" -o ! -s "$ref" ]; then
+          echo -e "\e[38;5;1mERROR\e[0m: Problem with reference file. Please check that it exists and is not empty..."; 1>&2;
+          exit 1
+       fi
 }
+function check_bwa_idx() {
+       check_ref
+       if [[ ! -f "${ref}.bwt" ]]; then
+            $bwa index $ref
+       fi
+}
+function check_gatk_dict() {
+       check_ref
+       #--- Create a reference dictionary if it does not exist
+       if [[ ! -f "${ref/.fasta/.dict}" ]]; then
+          $gatk CreateSequenceDictionary -R $ref
+       fi
+}
+function check_samtools_fai() {
+       check_ref
+       if [[ ! -f "${ref/.fasta/.fai}" ]]; then
+          $samtools faidx $ref
+       fi
+}
+
+#--- Check additional [optional] references (Known sites) for IndelRealignment, BQSR, and VQSR
+function check_sites() {
+    nks=$(echo $ks | sed 's/,/ --known /g')
+    echo "--known $nks" > rtc.ks.txt
+    nks=$(echo $ks | sed 's/,/ -known /g')
+    echo "-known $nks" > ir.ks.txt
+    nks=$(echo $ks | sed 's/,/ --known-sites /g')
+    echo "--known-sites $nks" > bqsr.ks.txt
+}
+
+#--- Check trimmomatic adapters
+function checkadapter() {
+    function warning() {
+        echo -e """\e[38;5;3mWARNING\e[0m: The adapter was not found! Make sure it is present in the current directory""" 1>&2;
+        echo -e """\e[38;5;6m===>\e[0m Attempting to trim without adapter. Press \e[38;5;6mCTRL+C\e[0m to stop\n""" 1>&2;
+        exit 1;
+
+    }
+    case "$(echo "$adap" | tr [:lower:] [:upper:])" in
+        NP) if [[ -e "NexteraPE-PE.fa" ]]; then echo ILLUMINACLIP:NexteraPE-PE.fa:2:30:10; else warning; fi ;;
+        T3U) if [[ -e "TruSeq3-PE-2.fa" ]]; then echo ILLUMINACLIP:TruSeq3-PE-2.fa:2:30:10;  else warning; fi ;;
+        T2P) if [[ -e "TruSeq2-PE.fa" ]]; then echo ILLUMINACLIP:TruSeq2-PE.fa:2:30:10;  else warning; fi ;;
+        T3P) if [[ -e "TruSeq3-PE.fa" ]]; then echo ILLUMINACLIP:TruSeq3-PE.fa:2:30:10;  else warning; fi ;;
+        T2S) if [[ -e "TruSeq2-SE.fa" ]]; then echo ILLUMINACLIP:TruSeq2-SE.fa:2:30:10;  else warning; fi ;;
+        T3S) if [[ -e "TruSeq3-SE.fa" ]]; then echo ILLUMINACLIP:TruSeq3-SE.fa:2:30:10;  else warning; fi ;;
+         *) echo -e """\e[38;5;3mWARNING\e[0m: No such adapter '$adap'! Type --help for usage\n\e[38;5;6m===>\e[0m Attempting to trim without adapter. Press \e[38;5;6mCTRL+C\e[0m to stop\n""" 1>&2; exit 1; ;;
+    esac
+}
+
+#--- Check sample file
+function check_sample() {
+   if [[ "$meta" == NULL ]]; then
+      echo -e "\e[38;5;1mERROR\e[0m: -s,--sample_list not provided! Exiting..."; 1>&2;
+      exit 1
+   elif [ -f $meta -a -s $meta ]; then
+        for i in $(awk '{print $1}' $meta); do
+           if [ ! -f ${dname}$i ]; then
+	      echo -e "\e[38;5;1mERROR\e[0m: '${i}' was not found in the directory '${dname}'.\nPlease specify the path with -p or --path or check that the files in the path are the same in the sample list" 1>&2;
+              exit 1;
+           elif [ -f ${dname}${i} -a ! -s ${dname}${i} ]; then
+              echo -e "\e[38;5;1mERROR\e[0m: '${i}' may be empty. Please check and correct '${dname}'." 1>&2;
+              exit 1;
+           fi
+        done
+   elif [ -f $meta -a ! -s $meta ]; then
+        echo -e "\e[38;5;1mERROR\e[0m: '$meta' seems to be empty! Please check and correct." 1>&2;
+   fi
+}
+
+#--- Check Fastq/SAM/BAM and make input files
+function checkfq() {
+    #--- Make input files from forward/reverse runs or SAM/BAM files
+    for i in ${dname}*_1.fastq* ${dname}*_R1*.fastq* ${dname}*_1.fq* ${dname}*_R1*.fq* ${dname}*.1.fq* ${dname}*.R1.fq* ${dname}*.sam ${dname}*.bam; do
+        if [[ -e $i ]]; then
+           basename $i;
+        fi
+    done > fwd.txt
+    if [[ ! -s "fwd.txt" ]]; then
+       echo -e "\n\e[38;5;1mERROR\e[0m: No fastq/SAM/BAM file found in the specified location: '$dname'\nPlease specify path to Fastq/SAM/BAM files using -p or --path\n"
+       rm fwd.txt 1>&2;
+       exit 1;
+    fi
+
+    for i in ${dname}*_2.fastq* ${dname}*_R2*.fastq* ${dname}*_2.fq* ${dname}*_R2*.fq* ${dname}*.2.fq* ${dname}*.R2.fq*; do
+        if [[ -e $i ]]; then
+           basename $i;
+        fi
+    done > rev.txt
+     if [[ ! -s "rev.txt" ]]; then
+        cp fwd.txt forward_reverse.txt
+        awk -v d="${dname}" '{print d$1}' forward_reverse.txt > fastq.input.txt
+     else
+        paste fwd.txt rev.txt | awk '{print $1,$2}' > forward_reverse.txt
+        awk -v d="${dname}" '{print d$1,d$2}' forward_reverse.txt > fastq.input.txt
+     fi
+    rm fwd.txt rev.txt
+}
+
+#--- Prepare input for BQSR
+function check_bamlist() {
+if [[ "$blist" == NULL ]]; then
+   if [ -f "bam.list" ]; then
+      rm bam.list;
+   fi;
+   for i in *.bam; do
+      if [[ ( -f ${i} ) && ( -s ${i} ) ]]; then  # if bam files exist in the current directory and are not empty
+         basename -a $(ls $i) >> bam.list;
+      elif [[ -d aligned ]]; then # if a directory exists called aligned
+         for j in aligned/*.bam; do
+             if [[ ( -f ${j} ) && ( -s ${j} ) ]]; then # if bam files exist in the aligned directory and are not empty
+                basename -a $(ls $j) >> bam.list;
+             fi;
+         done;
+      else
+         echo -e "\n\e[38;5;1mERROR\e[0m: Please check that there are bam files in the path $dname\n" 1>&2;
+	 exit 1;
+      fi;
+   done;
+   if [ -f "bam.list" -a -s "bam.list" ]; then
+      echo -e "\n\e[38;5;6mNOTE\e[0m: $(cat bam.list | wc -l) BAM file(s) counted in '$(readlink -f $(dirname $(cat bam.list | head -1)))/' and will be used! Press CTRL+C to stop\n";
+      sleep 1;
+   fi;
+fi
+}
+
+#--- Prepare input for BQSR
+function check_gvcflist() {
+if [[ ( "$glist" == NULL ) ]]; then
+   if [ -f "gvcf.list" ]; then
+      rm gvcf.list;
+   fi;
+   for i in *.gvcf*; do
+      if [[ ( -f ${i} ) && ( -s ${i} ) ]]; then  # if gvcf files exist in the current directory and are not empty
+         basename -a $(ls $i) >> gvcf.list;
+      elif [[ -d vcall ]]; then # if a directory exists called vcall
+         for j in vcall/*.gvcf*; do
+             if [[ ( -f ${j} ) && ( -s ${j} ) ]]; then # if gvcf files exist in the vcall directory and are not empty
+                basename -a $(ls $j) >> gvcf.list;
+             fi;
+         done;
+      else
+         echo -e "\n\e[38;5;1mERROR\e[0m: Please check that there are GVCF files in the path $dname\n" 1>&2;
+         #exit 1;
+      fi;
+   done;
+   if [ -f "gvcf.list" -a -s "gvcf.list" ]; then
+      echo -e "\n\e[38;5;6mNOTE\e[0m: $(cat gvcf.list | wc -l) GVCF file(s) counted in '$(readlink -f $(dirname $(cat gvcf.list | head -1)))/' and will be used! Press CTRL+C to stop\n";
+      sleep 1;
+   fi;
+fi
+}
+
+
+#  3. prep functions
+#
+#	summary:
+#	+ preptrim()
+#	+ prepmap()
+#
+
+#--- Check if Fastq files are present and make trim input files
+function preptrim() {
+    checkfq
+    #--- On checking for fastq files above, we checked for SAM/BAM as well. If the function picked SAM/BAM, we definitely wanna spill errors since we can't trim SAM/BAM here
+    for i in $(awk '{print $1}' forward_reverse.txt | head -1); do
+        if [[ ( ${i} == *.sam ) || ( ${i} == *.sam.gz ) || ( "${i}" == *.bam ) ]]; then
+           echo -e "\n\e[38;5;1mERROR\e[0m: No fastq/SAM/BAM file found in the specified location: '$dname'\nPlease specify path to Fastq/SAM/BAM files using -p or --path\n" 1>&2;
+           exit 1;
+           rm forward_reverse.txt fastq.input.txt
+        fi
+    done
+    mkdir -p paired
+    awk -v d="${dname}" '{print d$1,d$2,"paired/"$1"_fp.fq.gz","unpaired/"$1"_fu.fq.gz","paired/"$2"_rp.fq.gz","unpaired/"$2"_ru.fq.gz"}' forward_reverse.txt > trim.input.txt
+    #rm forward_reverse.txt fastq.input.txt;
+}
+
+#--- Prepare alignment/mapping input
+function prepmap() {
+   check_ref; checkfq; preptrim
+   if [ -e "forward_reverse.txt" -a -s "forward_reverse.txt" ]; then
+      awk -v d="$dname" '{print d$1,d$2,"-o","aligned/"$1".sam"}' forward_reverse.txt > align.input.txt
+      #rm trim.input.txt
+   else
+      echo -e "\n\e[38;5;1mERROR\e[0m: Please check that there are fastq files in the path...\n"
+   fi
+}
+

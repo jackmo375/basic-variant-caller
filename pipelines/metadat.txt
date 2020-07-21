@@ -1,1 +1,0 @@
-lambda-virus_1.fq lambda-virus_2.fq sam1 ILLUMINA

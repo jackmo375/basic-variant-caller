@@ -1,1 +1,0 @@
-/home/jack/Local/GeneMap/basic-variant-caller/data/reads/lambda-virus_1.fq /home/jack/Local/GeneMap/basic-variant-caller/data/reads/lambda-virus_2.fq
