@@ -1,5 +1,6 @@
 {
-  "species": "lambda-virus",
-  "threads": 8,
-  "read_type": "pe"
+  "ref": "lambda-virus.fa",
+  "threads":   8,
+  "meta": "lambda-virus.txt",
+  "minlen": 40
 }

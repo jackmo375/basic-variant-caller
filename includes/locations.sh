@@ -2,7 +2,6 @@
 ## project path variables
 pro_dir=/home/jack/Local/GeneMap/basic-variant-caller
 
-tmp_dir=${pro_dir}/temp
 src_dir=${pro_dir}/source
 tls_dir=${pro_dir}/tools
 dat_dir=${pro_dir}/data
@@ -12,6 +11,7 @@ vcf_dir=${dat_dir}/vcf
 rds_dir=${dat_dir}/reads
 ref_dir=${dat_dir}/references
 fqc_dir=${dat_dir}/fastqc
+tmp_dir=${dat_dir}/temp
 
 pip_dir=${pro_dir}/pipelines
 
@@ -27,5 +27,6 @@ gatk=${tls_dir}/gatk-4.1.7.0/gatk
 picard=${tls_dir}/picard-2.23.1/picard.jar
 simulate=${tls_dir}/simulate-0.1/simulate.pl
 fastqc=${tls_dir}/fastqc/fastqc
+trimmomatic=${tls_dir}/trimmomatic-0.39/trimmomatic-0.39.jar
 
 jaccard=${tls_dir}/jaccard/jaccard.py

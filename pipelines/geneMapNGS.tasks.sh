@@ -18,7 +18,7 @@
 #			(again, called by the command functions 
 #			themselves; not called at pipeline level)*
 #
-###############################################
+#############################################################
 
 function start() {
     echo -e """
@@ -63,162 +63,285 @@ function start() {
 #	+ bcfcall()
 #	
 
-#--- FastQC
+#  fq(), pfq()
+#
+#	*calls FastQC on read files in series, parallel*
+#
+#	input:
+#		+ $meta
+#	tools required:
+#		+ $fastqc
+#		+ gnu parallel (for pfq() only)
+#	outputs:
+#		+ fastq quality report files in ${fqc_dir}
+#		+ forward_reverse.txt in ${tmp_dir} 
+#
 function fq() {
-    checkfq
-    id=fastq.input.txt; odr="${fqc_dir}/"
+
+	tmp_prefix=${tmp_dir}/$(random_id)_
+	check_sample
+
+	echo ${tmp_prefix}
+
+    check_fq $tmp_prefix
+    id=${tmp_prefix}fastq.input.txt; odr="${fqc_dir}/"
     while read -r line; do
-        echo -e "FastQC"
+        echo -e "running FastQC"
         $fastqc -t $t $line -o $odr
     done < $id
-    rm fastq.input.txt
+
+	# remove all temporary files
+	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
 }
 
 function pfq() {
-       checkfq
-       id=fastq.input.txt; odr="${fqc_dir}/"
-       n=$((50/$t))
-       echo -e "FastQC"
-       echo -e "Your jobs will be run in $n parallel runs"
-       cat $id | \
-           parallel --col-sep ' ' echo -e "-t $t {1} $(if [ -n {2} ]; then echo {2}; fi) -o $odr" | \
-           xargs -I input -P$n sh -c "$fastqc input"
-       rm fastq.input.txt
+	tmp_prefix=${tmp_dir}/$(random_id)_
+	check_sample
+	check_fq $tmp_prefix
+
+	id=${tmp_prefix}fastq.input.txt; odr="${fqc_dir}/"
+	n=$((50/$t))
+	echo -e "running FastQC"
+	echo -e "Your jobs will be split across $n parallel threads"
+	cat $id | \
+		parallel --col-sep ' ' echo -e "-t $t {1} $(if [ -n {2} ]; then echo {2}; fi) -o $odr" | \
+		xargs -I input -P$n sh -c "$fastqc input"
+
+	# remove all temporary files
+	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
 }
 
-#--- trimmomatic
+#  tim(), ptrim()
+#
+#	*clips unwanted reads in fastq files with trimmomatic*
+#	inputs:
+#		+ $meta
+#		+ forward_reverse.txt in ${tmp_dir} 
+#	tools required:
+#		+ $trimmomatic
+#	outputs:
+#		+ trimmed (and zipped) read (fastq) files
+#
 function trim() {
-       preptrim
-       mkdir -p paired unpaired
-       id=trim.input.txt
-       while read -r line; do
-           echo -e "Trommomatic"
-           trimmomatic PE \
+
+	tmp_prefix=${tmp_dir}/$(random_id)_
+	check_sample
+	prep_trim $tmp_prefix
+
+	id=${tmp_prefix}trim.input.txt
+	while read -r line; do
+		echo -e "running Trimmomatic"
+		java -jar $trimmomatic PE \
               -phred33 $line \
               $(if [[ $adap != NULL ]]; then checkadapter; fi) \
               LEADING:$leadx \
               TRAILING:$trailx \
               SLIDINGWINDOW:4:15 \
-              MINLEN:36 \
+              MINLEN:${minlen} \
               -threads $t
-       done < $id
-       rm trim.input.txt
+	done < $id
+	
+	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
 }
 
 function ptrim() {
-       preptrim
-       mkdir -p paired unpaired
-       id=trim.input.txt
-       n=$((50/$t ))
-       echo -e "trimmomatic"
-       echo -e "Your jobs will be run in $n parallel runs"
-          cat $id | \
-              parallel --col-sep ' ' echo "PE -phred33 {} $(if [[ $adap != NULL ]]; then checkadapter; fi) LEADING:$leadx TRAILING:$trailx SLIDINGWINDOW:4:15 MINLEN:36 -threads $t" | \
-              xargs -I input -P$n sh -c "trimmomatic input"
-       rm trim.input.txt
+
+	tmp_prefix=${tmp_dir}/$(random_id)_
+	check_sample
+	prep_trim $tmp_prefix
+
+	id=${tmp_prefix}trim.input.txt
+	n=$((50/$t ))
+	echo -e "running Trimmomatic"
+	echo -e "Your jobs will be split across $n parallel threads"
+	cat $id | \
+		parallel --col-sep ' ' echo "PE -phred33 {} $(if [[ $adap != NULL ]]; then checkadapter; fi) LEADING:$leadx TRAILING:$trailx SLIDINGWINDOW:4:15 MINLEN:$minlen -threads $t" | \
+		xargs -I input -P$n sh -c "java -jar $trimmomatic input"
+	
+	# remove temporary files
+	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
 }
 
-#--- Mapping/Alignment (BWA)
+#  bmap(), pbmap()
+#
+#	* Mapping/Alignment (BWA)
+#	* this function does three things in sequence:
+#	*	1. aligns all reads to the reference sequence with bwa mem
+#	*		 to create sam files...
+#	*	2. ...converts the sam files to bam files with $samtools view...
+#	*	3. ...and then sorts the bam files into 'mapped' bam files,
+#	*		and removes the unsorted (unmapped bam files).
+#
+#	inputs:
+#		+ $t
+#		+ $ref
+#
+#	tools required:
+#		+ $bwa
+#		+ $samtools
+#
+#	outputs:
+#		+ aligned and sorted (mapped) sequences for each sample, 
+#			saved as compressed bam files
+#
 function bmap() {
-       prepmap
-       mkdir -p aligned
-       id=align.input.txt
-       echo -e "BWA-BCFTOOLS Alignment/Mapping: Serial\n"
-       while read -r line; do
-           $bwa mem -t $t ${ref_dir}/${species}.bwa $line
-       done < $id
-       for sam in $(awk '{print $4}' align.input.txt); do
-           $samtools view \
-               -h \
-               ${sam} \
-               -O BAM \
-               -o ${sam/.sam/.bam}
-           $samtools sort \
-               -O BAM \
-               --reference $ref \
-               -@ $t \
-               -o ${sam/.sam/.mapped.bam} \
-               ${sam/.sam/.bam}
-           echo ${sam/.sam/.mapped.bam}
-           rm ${sam/.sam/.bam}
-       done > bam.list
-       rm align.input.txt
+
+	tmp_prefix=${tmp_dir}/$(random_id)_
+	check_sample
+	check_ref
+	check_bwa_idx
+	prep_map $tmp_prefix
+
+	id=${tmp_prefix}align.input.txt
+	echo -e "running BWA-BCFTOOLS Alignment/Mapping: Serial\n"
+
+	# align the reads to the reference:
+	while read -r line; do
+		$bwa mem -t $t $ref $line
+	done < $id
+	for sam in $(awk '{print $4}' ${tmp_prefix}align.input.txt); do
+		# create file names:
+		unsorted_bam=${sam/.sam/.bam}
+		unsorted_bam=${bam_dir}/${unsorted_bam##*/}
+		mapped_bam=${sam/.sam/.mapped.bam}
+		mapped_bam=${bam_dir}/${mapped_bam##*/}
+
+		$samtools view \
+		   -h \
+		   ${sam} \
+		   -O BAM \
+		   -o $unsorted_bam
+		$samtools sort \
+		   -O BAM \
+		   --reference $ref \
+		   -@ $t \
+		   -o $mapped_bam \
+		   $unsorted_bam
+
+		rm $unsorted_bam
+	done
+
+	# remove all temporary files from this call
+	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
 }
 
 function pbmap() {
-       prepmap
-       mkdir -p aligned
-       id=align.input.txt
-       awk '{print $4,"-O BAM -o",$4}' align.input.txt | \
-           sed 's/.sam/.bam/2' > sam2bam.input.txt
-       awk '{print $5,$5}' sam2bam.input.txt | \
-           sed 's/.bam/.mapped.bam/1' > sortbam.input.txt
-       n=$((50/$t))
-       echo -e "BWA-BCFTOOLS Alignment/Mapping\n"
-       cat align.input.txt | \
-           parallel --col-sep ' ' echo "mem -t $t ${ref_dir}/${species}.bwa {}" | \
-           xargs -I input -P$n sh -c "$bwa input"
-       cat sam2bam.input.txt | \
-           parallel --col-sep ' ' echo "view -h {}" | \
-           xargs -I input -P$n sh -c "$samtools input"
-       cat sortbam.input.txt | \
-           parallel --col-sep ' ' echo "sort -O BAM --reference $ref -@ $t -o {}" | \
-           xargs -I input -P$n sh -c "$samtools input"
-       for sam in $(awk '{print $4}' align.input.txt); do
-           rm ${sam};
-       done
-       for bam in $(awk '{print $2}' sortbam.input.txt); do
-           rm ${bam};
-       done
-       for i in out.vcf.gz aligned/*.sam; do
-           if [[ -e "${i}" ]]; then
-              rm $i;
-           fi;
-       done
-       rm align.input.txt sam2bam.input.txt sortbam.input.txt
+
+	tmp_prefix=${tmp_dir}/$(random_id)_
+	check_sample
+	check_ref
+	prep_map $tmp_prefix
+
+	id=${tmp_prefix}align.input.txt
+
+	# create file names
+	awk '{print $4,"-O BAM -o",$4}' ${tmp_prefix}align.input.txt | \
+	   sed 's/\.sam/\.bam/2' > ${tmp_prefix}sam2bam.input.txt
+	awk '{print $5,$5}' ${tmp_prefix}sam2bam.input.txt | \
+	   sed 's/\.bam/\.mapped.bam/1' > ${tmp_prefix}sortbam.input.txt
+	n=$((50/$t))
+	echo -e "running BWA-BCFTOOLS Alignment/Mapping: parallel\n"
+
+	# align each sample's set of reads to the reference sequence
+	cat ${tmp_prefix}align.input.txt | \
+	   parallel --col-sep ' ' echo "mem -t $t $ref {}" | \
+	   xargs -I input -P$n sh -c "$bwa input"
+
+	# compress each sample's set of aligned reads to bam format
+	cat ${tmp_prefix}sam2bam.input.txt | \
+	   parallel --col-sep ' ' echo "view -h {}" | \
+	   xargs -I input -P$n sh -c "$samtools input"
+
+	# sort each sample's set of aligned reads 
+	cat ${tmp_prefix}sortbam.input.txt | \
+	   parallel --col-sep ' ' echo "sort -O BAM --reference $ref -@ $t -o {}" | \
+	   xargs -I input -P$n sh -c "$samtools input"
+
+	# then remove all unsorted bam files
+	for sam in $(awk '{print $4}' ${tmp_prefix}align.input.txt); do
+	   rm ${sam};
+	done
+	for bam in $(awk '{print $2}' ${tmp_prefix}sortbam.input.txt); do
+	   rm ${bam};
+	done
+
+	# not sure...
+	for i in out.vcf.gz aligned/*.sam; do
+	   if [[ -e "${i}" ]]; then
+		  rm $i;
+	   fi;
+	done
+
+	# remove all temporary files from this call
+	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
+
 }
 
-#--- GATKv4 BWA Mapping/Alignment
+#  gmap(), pgmap()
+#
+#	*GATKv4 BWA Mapping/Alignment*
+#	inputs:
+#		+ $meta
+#		+ $t
+#		+ $ref
+#		+ a bwa index for $ref
+#		+ a gatk dictionary for $ref
+#
+#	tools required:
+#
+#	outputs:
+#
 function gmap() {
-       check_sample; check_ref; check_bwa_idx; check_gatk_dict; check_samtools_fai;
-       mkdir -p aligned
-       awk '{print $1,$2,$3,$4}' ${meta} > metadat.txt
-       id="metadat.txt"
-       echo -e "GATK-BWA Alignment. Your jobs will run in serial\n"
-       while read -r line; do
-           $gatk FastqToSam \
-                -F1 ${dname}$(echo $line | awk '{print $1}') \
-                -F2 ${dname}$(echo $line | awk '{print $2}') \
-                -SM $(echo $line | awk '{print $3}') \
-                -PL $(echo $line | awk '{print $4}') \
-                -RG $(echo $line | awk '{print $3}') \
-                -O aligned/"$(echo $line | awk '{print $3}').unmapped.bam"
-           $bwa mem \
-                -t $t \
-                $ref $(echo $line | awk '{print $1,$2}') \
-                -o "$(echo $line | awk '{print "aligned/"$3}').sam"
-           $samtools view \
-                -h "$(echo $line | awk '{print "aligned/"$3}').sam" \
-                -O BAM \
-                -o "$(echo $line | awk '{print "aligned/"$3}').bam"
-           $samtools sort \
-                -O BAM \
-                --reference $ref \
-                -@ $t \
-                -o "$(echo $line | awk '{print "aligned/"$3}').mapped.bam" \
-                "$(echo $line | awk '{print "aligned/"$3}').bam"
-           $gatk MergeBamAlignment \
-                -O "$(echo $line | awk '{print "aligned/"$3}').bam" \
-                -R ${ref} \
-                -UNMAPPED "$(echo $line | awk '{print "aligned/"$3}').unmapped.bam" \
-                -ALIGNED "$(echo $line | awk '{print "aligned/"$3}').mapped.bam"
-       done < $id
-       for i in $(echo $line | awk '{print "aligned/"$3}').*mapped.bam; do
-           if [ -e $i ]; then
-              rm $i
-           fi
-       done
-       rm metadat.txt
+
+	tmp_prefix=${tmp_dir}/$(random_id)_
+	check_sample
+	check_ref
+	check_bwa_idx
+	check_gatk_dict 
+	check_samtools_fai
+
+	awk '{print $1,$2,$3,$4}' ${meta} > ${tmp_prefix}metadat.txt
+	id="${tmp_prefix}metadat.txt"
+	echo -e "GATK-BWA Alignment. Your jobs will run in serial\n"
+
+	while read -r line; do
+		[ ! $line == "#"* ] && continue
+		$gatk FastqToSam \
+			-F1 ${rds_dir}$(echo $line | awk '{print $1}') \
+			-F2 ${rds_dir}$(echo $line | awk '{print $2}') \
+			-SM $(echo $line | awk '{print $3}') \
+			-PL $(echo $line | awk '{print $4}') \
+			-RG $(echo $line | awk '{print $3}') \
+			-O ${bam_dir}/"$(echo $line | awk '{print $3}').unmapped.bam" || { echo 'FastqtoSam failed'; exit 1;}
+		$bwa mem \
+			-t $t \
+			$ref $(echo $line | awk '{print $1,$2}') \
+			-o "$(echo $line | awk -v d="${sam_dir}/" '{print d$3}').sam" || { echo 'bwa mem step failed'; exit 1; }
+		$samtools view \
+			-h "$(echo $line | awk '{print "${sam_dir}/"$3}').sam" \
+			-O BAM \
+			-o "$(echo $line | awk '{print "${bam_dir}/"$3}').bam" || { echo 'sam to bam step failed'; exit 1; }
+		$samtools sort \
+			-O BAM \
+			--reference $ref \
+			-@ $t \
+			-o "$(echo $line | awk '{print "${bam_dir}/"$3}').mapped.bam" \
+			"$(echo $line | awk '{print "${bam_dir}/"$3}').bam" || { echo 'sorting the bam files step failed'; exit 1; }
+		$gatk MergeBamAlignment \
+			-O "$(echo $line | awk '{print "${bam_dir}"$3}').bam" \
+			-R ${ref} \
+			-UNMAPPED "$(echo $line | awk '{print "${bam_dir}"$3}').unmapped.bam" \
+			-ALIGNED "$(echo $line | awk '{print "${bam_dir}"$3}').mapped.bam" || { echo 'merge bam alignment step failed'; exit 1; }
+	done < $id
+	for i in $(echo $line | awk '{print "${bam_dir}"$3}').*mapped.bam; do
+	   if [ -e $i ]; then
+		  rm $i
+	   fi
+	done
+
+	# remove all temporary files
+	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
+
 }
 
 function pgmap() {
@@ -616,7 +739,7 @@ function bcfcall() {
 #	+ check_sites()
 #	+ check_adapter()
 #	+ check_sample()
-#	+ checkfq()
+#	+ check_fq()
 #	+ check_bamlist()
 #	+ check_gvcflist()
 #
@@ -634,20 +757,21 @@ function check_ref() {
 function check_bwa_idx() {
        check_ref
        if [[ ! -f "${ref}.bwt" ]]; then
-            $bwa index $ref
+            echo "${error}: can't find the bwa index for $ref"
+			exit 1
        fi
 }
 function check_gatk_dict() {
-       check_ref
-       #--- Create a reference dictionary if it does not exist
-       if [[ ! -f "${ref/.fasta/.dict}" ]]; then
-          $gatk CreateSequenceDictionary -R $ref
-       fi
+	check_ref
+	if [[ ! -f "${ref/.fasta/.dict}" ]]; then
+		echo "${error}: can't find gatk reference dictionary"
+		exit 1
+	fi
 }
 function check_samtools_fai() {
        check_ref
        if [[ ! -f "${ref/.fasta/.fai}" ]]; then
-          $samtools faidx $ref
+          echo "${error}: can't find samtools fai index"
        fi
 }
 
@@ -662,7 +786,7 @@ function check_sites() {
 }
 
 #--- Check trimmomatic adapters
-function checkadapter() {
+function check_adapter() {
     function warning() {
         echo -e """\e[38;5;3mWARNING\e[0m: The adapter was not found! Make sure it is present in the current directory""" 1>&2;
         echo -e """\e[38;5;6m===>\e[0m Attempting to trim without adapter. Press \e[38;5;6mCTRL+C\e[0m to stop\n""" 1>&2;
@@ -682,51 +806,63 @@ function checkadapter() {
 
 #--- Check sample file
 function check_sample() {
-   if [[ "$meta" == NULL ]]; then
-      echo -e "\e[38;5;1mERROR\e[0m: -s,--sample_list not provided! Exiting..."; 1>&2;
-      exit 1
-   elif [ -f $meta -a -s $meta ]; then
-        for i in $(awk '{print $1}' $meta); do
-           if [ ! -f ${dname}$i ]; then
-	      echo -e "\e[38;5;1mERROR\e[0m: '${i}' was not found in the directory '${dname}'.\nPlease specify the path with -p or --path or check that the files in the path are the same in the sample list" 1>&2;
-              exit 1;
-           elif [ -f ${dname}${i} -a ! -s ${dname}${i} ]; then
-              echo -e "\e[38;5;1mERROR\e[0m: '${i}' may be empty. Please check and correct '${dname}'." 1>&2;
-              exit 1;
-           fi
-        done
-   elif [ -f $meta -a ! -s $meta ]; then
-        echo -e "\e[38;5;1mERROR\e[0m: '$meta' seems to be empty! Please check and correct." 1>&2;
-   fi
+	# check meta variabe was set
+	if [[ "$meta" == NULL ]]; then
+		echo -e "\e[38;5;1mERROR\e[0m: -s,--sample_list not provided! Exiting..."; 1>&2;
+		exit 1
+	elif [ -f $meta -a -s $meta ]; then
+		for i in $(awk '{print $1}' $meta); do
+			[ ! $i == "#"* ] && continue
+			if [ ! -f ${rds_dir}$i ]; then
+				echo -e "\e[38;5;1mERROR\e[0m: '${i}' was not found in the directory '${rds_dir}'.\nPlease specify the path with -p or --path or check that the files in the path are the same in the sample list" 1>&2;
+				exit 1;
+			elif [ -f ${rds_dir}${i} -a ! -s ${rds_dir}${i} ]; then
+				echo -e "\e[38;5;1mERROR\e[0m: '${i}' may be empty. Please check and correct '${rds_dir}'." 1>&2;
+				exit 1;
+		   fi
+		done
+	elif [ -f $meta -a ! -s $meta ]; then
+		echo -e "\e[38;5;1mERROR\e[0m: '$meta' seems to be empty! Please check and correct." 1>&2;
+	fi
 }
 
 #--- Check Fastq/SAM/BAM and make input files
-function checkfq() {
+function check_fq() {
+	tmp_prefix=$1
+
+	# get all sample fastq file names from meta file
+
     #--- Make input files from forward/reverse runs or SAM/BAM files
-    for i in ${dname}*_1.fastq* ${dname}*_R1*.fastq* ${dname}*_1.fq* ${dname}*_R1*.fq* ${dname}*.1.fq* ${dname}*.R1.fq* ${dname}*.sam ${dname}*.bam; do
-        if [[ -e $i ]]; then
-           basename $i;
-        fi
-    done > fwd.txt
-    if [[ ! -s "fwd.txt" ]]; then
+	> ${tmp_prefix}fwd.txt
+	while IFS= read -r line; do
+		if [[ ! $line == "#"* ]]; then
+			line_array=( $line )
+    		echo "${line_array[0]}" >> ${tmp_prefix}fwd.txt
+		fi
+	done < $meta
+    if [[ ! -s "${tmp_prefix}fwd.txt" ]]; then
        echo -e "\n\e[38;5;1mERROR\e[0m: No fastq/SAM/BAM file found in the specified location: '$dname'\nPlease specify path to Fastq/SAM/BAM files using -p or --path\n"
-       rm fwd.txt 1>&2;
+       rm ${tmp_prefix}fwd.txt 1>&2;
        exit 1;
     fi
 
-    for i in ${dname}*_2.fastq* ${dname}*_R2*.fastq* ${dname}*_2.fq* ${dname}*_R2*.fq* ${dname}*.2.fq* ${dname}*.R2.fq*; do
-        if [[ -e $i ]]; then
-           basename $i;
-        fi
-    done > rev.txt
-     if [[ ! -s "rev.txt" ]]; then
-        cp fwd.txt forward_reverse.txt
-        awk -v d="${dname}" '{print d$1}' forward_reverse.txt > fastq.input.txt
-     else
-        paste fwd.txt rev.txt | awk '{print $1,$2}' > forward_reverse.txt
-        awk -v d="${dname}" '{print d$1,d$2}' forward_reverse.txt > fastq.input.txt
-     fi
-    rm fwd.txt rev.txt
+	> ${tmp_prefix}rev.txt
+	while IFS= read -r line; do
+		if [[ ! $line == "#"* ]]; then
+			line_array=( $line )
+    		echo "${line_array[1]}" >> ${tmp_prefix}rev.txt
+		fi
+	done < $meta
+
+	if [[ ! -s "${tmp_prefix}rev.txt" ]]; then
+		cp ${tmp_prefix}fwd.txt ${tmp_prefix}forward_reverse.txt
+		awk -v d="${rds_dir}/" '{print d$1}' ${tmp_prefix}forward_reverse.txt > ${tmp_prefix}fastq.input.txt
+	else
+		paste ${tmp_prefix}fwd.txt ${tmp_prefix}rev.txt | awk '{print $1,$2}' > ${tmp_prefix}forward_reverse.txt
+		awk -v d="${rds_dir}/" '{print d$1,d$2}' ${tmp_prefix}forward_reverse.txt > ${tmp_prefix}fastq.input.txt
+	fi
+    rm ${tmp_prefix}fwd.txt ${tmp_prefix}rev.txt
+
 }
 
 #--- Prepare input for BQSR
@@ -787,34 +923,38 @@ fi
 #  3. prep functions
 #
 #	summary:
-#	+ preptrim()
-#	+ prepmap()
+#	+ prep_trim()
+#	+ prep_map()
 #
 
-#--- Check if Fastq files are present and make trim input files
-function preptrim() {
-    checkfq
+
+function prep_trim() {
+	tmp_prefix=$1
+    check_fq $tmp_prefix
+
     #--- On checking for fastq files above, we checked for SAM/BAM as well. If the function picked SAM/BAM, we definitely wanna spill errors since we can't trim SAM/BAM here
-    for i in $(awk '{print $1}' forward_reverse.txt | head -1); do
+    for i in $(awk '{print $1}' ${tmp_prefix}forward_reverse.txt | head -1); do
         if [[ ( ${i} == *.sam ) || ( ${i} == *.sam.gz ) || ( "${i}" == *.bam ) ]]; then
-           echo -e "\n\e[38;5;1mERROR\e[0m: No fastq/SAM/BAM file found in the specified location: '$dname'\nPlease specify path to Fastq/SAM/BAM files using -p or --path\n" 1>&2;
+           echo -e "\n\e[38;5;1mERROR\e[0m: No fastq/SAM/BAM file found in the specified location: '${rds_dir}'\nPlease specify path to Fastq/SAM/BAM files using -p or --path\n" 1>&2;
            exit 1;
-           rm forward_reverse.txt fastq.input.txt
+           rm ${tmp_prefix}forward_reverse.txt ${tmp_prefix}fastq.input.txt
         fi
     done
-    mkdir -p paired
-    awk -v d="${dname}" '{print d$1,d$2,"paired/"$1"_fp.fq.gz","unpaired/"$1"_fu.fq.gz","paired/"$2"_rp.fq.gz","unpaired/"$2"_ru.fq.gz"}' forward_reverse.txt > trim.input.txt
-    #rm forward_reverse.txt fastq.input.txt;
+    awk -v d="${rds_dir}/" '{print d$1,d$2, d$1".paired_fp.fq.gz", d$1".unpaired_fu.fq.gz", d$2".paired_rp.fq.gz", d$2".unpaired_ru.fq.gz"}' ${tmp_prefix}forward_reverse.txt > ${tmp_prefix}trim.input.txt
+	#rm forward_reverse.txt fastq.input.txt;
 }
 
 #--- Prepare alignment/mapping input
-function prepmap() {
-   check_ref; checkfq; preptrim
-   if [ -e "forward_reverse.txt" -a -s "forward_reverse.txt" ]; then
-      awk -v d="$dname" '{print d$1,d$2,"-o","aligned/"$1".sam"}' forward_reverse.txt > align.input.txt
-      #rm trim.input.txt
-   else
-      echo -e "\n\e[38;5;1mERROR\e[0m: Please check that there are fastq files in the path...\n"
-   fi
+function prep_map() {
+	tmp_prefix=$1
+	check_ref
+	check_fq $tmp_prefix
+	prep_trim $tmp_prefix
+
+	if [ -e "${tmp_prefix}forward_reverse.txt" -a -s "${tmp_prefix}forward_reverse.txt" ]; then
+		awk -v i="${rds_dir}/" -v o="${sam_dir}/" '{print i$1,i$2,"-o",o$1".sam"}' ${tmp_prefix}forward_reverse.txt > ${tmp_prefix}align.input.txt
+	else
+		echo -e "\n\e[38;5;1mERROR\e[0m: Please check that there are fastq files in the path...\n"
+	fi
 }
 

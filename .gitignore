@@ -1,6 +1,7 @@
 temp
 data
 
+tools/trimmomatic*
 tools/bcftools*
 tools/bowtie*
 tools/bwa*

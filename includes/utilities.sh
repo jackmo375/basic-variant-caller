@@ -2,6 +2,7 @@
 red='\033[0;31m'
 green='\033[0;32m'
 nc='\033[0m' # No Color
+error='\e[38;5;1mERROR\e[0m'
 
 # generic useful functions
 custom_call()
@@ -22,4 +23,8 @@ value_from_json() {
 	
 	# echo the value, removing any quotation marks if present
 	echo $(sed -e 's/^"//' -e 's/"$//' <<<"$(cat $file | jq $key)")
+}
+
+random_id() {
+	openssl rand -hex 4
 }
