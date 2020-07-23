@@ -48,7 +48,7 @@ workflow() { argv=("$@")
 
 	##custom_call pbmap "aligning reads with bwa..."
 
-	custom_call gmap "GATKv4 BWA Mapping/Alignment..."
+	custom_call pgmap "GATKv4 BWA Mapping/Alignment..."
 	
 }
 

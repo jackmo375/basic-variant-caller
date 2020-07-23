@@ -96,8 +96,8 @@ function fq() {
 
 function pfq() {
 	tmp_prefix=${tmp_dir}/$(random_id)_
-	check_sample
-	check_fq $tmp_prefix
+	check_sample || return 1
+	check_fq $tmp_prefix || return 1
 
 	id=${tmp_prefix}fastq.input.txt; odr="${fqc_dir}/"
 	n=$((50/$t))
@@ -125,8 +125,8 @@ function pfq() {
 function trim() {
 
 	tmp_prefix=${tmp_dir}/$(random_id)_
-	check_sample
-	prep_trim $tmp_prefix
+	check_sample || return 1
+	prep_trim $tmp_prefix || return 1
 
 	id=${tmp_prefix}trim.input.txt
 	while read -r line; do
@@ -147,8 +147,8 @@ function trim() {
 function ptrim() {
 
 	tmp_prefix=${tmp_dir}/$(random_id)_
-	check_sample
-	prep_trim $tmp_prefix
+	check_sample || return 1
+	prep_trim $tmp_prefix || return 1
 
 	id=${tmp_prefix}trim.input.txt
 	n=$((50/$t ))
@@ -187,10 +187,10 @@ function ptrim() {
 function bmap() {
 
 	tmp_prefix=${tmp_dir}/$(random_id)_
-	check_sample
-	check_ref
-	check_bwa_idx
-	prep_map $tmp_prefix
+	check_sample || return 1
+	check_ref || return 1
+	check_bwa_idx || return 1
+	prep_map $tmp_prefix || return 1
 
 	id=${tmp_prefix}align.input.txt
 	echo -e "running BWA-BCFTOOLS Alignment/Mapping: Serial\n"
@@ -228,9 +228,9 @@ function bmap() {
 function pbmap() {
 
 	tmp_prefix=${tmp_dir}/$(random_id)_
-	check_sample
-	check_ref
-	prep_map $tmp_prefix
+	check_sample || return 1
+	check_ref || return 1
+	prep_map $tmp_prefix || return 1
 
 	id=${tmp_prefix}align.input.txt
 
@@ -279,7 +279,10 @@ function pbmap() {
 
 #  gmap(), pgmap()
 #
-#	*GATKv4 BWA Mapping/Alignment*
+#	* GATKv4 BWA Mapping/Alignment
+#	* its odd: only the parallel version marks duplicates
+#	* and indexes the final bam files. Is this a mistake?
+# 
 #	inputs:
 #		+ $meta
 #		+ $t
@@ -290,54 +293,66 @@ function pbmap() {
 #	tools required:
 #
 #	outputs:
+#		+ [gmap()]  ${bam_dir}/<sample_id>.bam (mapped bam files for each sample)
+#		+ [pgmap()] ${bam_dir}/<sample_id>_mkdups.bam
 #
 function gmap() {
 
 	tmp_prefix=${tmp_dir}/$(random_id)_
-	check_sample
-	check_ref
-	check_bwa_idx
-	check_gatk_dict 
-	check_samtools_fai
+	check_sample || return 1
+	check_ref || return 1
+	check_bwa_idx || return 1
+	check_gatk_dict || return 1 
+	check_samtools_fai || return 1
 
-	awk '{print $1,$2,$3,$4}' ${meta} > ${tmp_prefix}metadat.txt
 	id="${tmp_prefix}metadat.txt"
+	awk '{print $1,$2,$3,$4}' ${meta} > $id
 	echo -e "GATK-BWA Alignment. Your jobs will run in serial\n"
 
 	while read -r line; do
-		[ ! $line == "#"* ] && continue
+		[[ "$line" == "#"* ]] && continue
+
 		$gatk FastqToSam \
-			-F1 ${rds_dir}$(echo $line | awk '{print $1}') \
-			-F2 ${rds_dir}$(echo $line | awk '{print $2}') \
+			-F1 ${rds_dir}/$(echo $line | awk '{print $1}') \
+			-F2 ${rds_dir}/$(echo $line | awk '{print $2}') \
 			-SM $(echo $line | awk '{print $3}') \
 			-PL $(echo $line | awk '{print $4}') \
 			-RG $(echo $line | awk '{print $3}') \
-			-O ${bam_dir}/"$(echo $line | awk '{print $3}').unmapped.bam" || { echo 'FastqtoSam failed'; exit 1;}
+			-O ${bam_dir}/$(echo $line | awk '{print $3}').unmapped.bam \
+			|| { echo 'FastqToSam step failed'; return 1; }
 		$bwa mem \
 			-t $t \
-			$ref $(echo $line | awk '{print $1,$2}') \
-			-o "$(echo $line | awk -v d="${sam_dir}/" '{print d$3}').sam" || { echo 'bwa mem step failed'; exit 1; }
+			$ref $(echo $line | awk -v d="${rds_dir}/" '{print d$1,d$2}') \
+			-o ${sam_dir}/$(echo $line | awk '{print d$3}').sam \
+			|| { echo 'bwa mem step failed'; return 1; }
 		$samtools view \
-			-h "$(echo $line | awk '{print "${sam_dir}/"$3}').sam" \
+			-h ${sam_dir}/$(echo $line | awk '{print $3}').sam \
 			-O BAM \
-			-o "$(echo $line | awk '{print "${bam_dir}/"$3}').bam" || { echo 'sam to bam step failed'; exit 1; }
+			-o ${bam_dir}/$(echo $line | awk '{print $3}').bam \
+			|| { echo 'sam to bam step failed'; return 1; }
 		$samtools sort \
 			-O BAM \
 			--reference $ref \
 			-@ $t \
-			-o "$(echo $line | awk '{print "${bam_dir}/"$3}').mapped.bam" \
-			"$(echo $line | awk '{print "${bam_dir}/"$3}').bam" || { echo 'sorting the bam files step failed'; exit 1; }
+			-o ${bam_dir}/$(echo $line | awk '{print $3}').mapped.bam \
+			${bam_dir}/$(echo $line | awk '{print $3}').bam \
+			|| { echo 'sorting the bam files step failed'; return 1; }
 		$gatk MergeBamAlignment \
-			-O "$(echo $line | awk '{print "${bam_dir}"$3}').bam" \
+			-O ${bam_dir}/$(echo $line | awk '{print $3}').bam \
 			-R ${ref} \
-			-UNMAPPED "$(echo $line | awk '{print "${bam_dir}"$3}').unmapped.bam" \
-			-ALIGNED "$(echo $line | awk '{print "${bam_dir}"$3}').mapped.bam" || { echo 'merge bam alignment step failed'; exit 1; }
+			-UNMAPPED ${bam_dir}/$(echo $line | awk '{print $3}').unmapped.bam \
+			-ALIGNED ${bam_dir}/$(echo $line | awk '{print $3}').mapped.bam \
+			|| { echo 'merge bam alignment step failed'; return 1; }
+
+		for i in ${bam_dir}/$(echo $line | awk '{print $3}').*mapped.bam; do
+			if [ -e $i ]; then
+				rm $i
+			fi
+		done
+
+		# do we not need to mark duplicates here too?
+
 	done < $id
-	for i in $(echo $line | awk '{print "${bam_dir}"$3}').*mapped.bam; do
-	   if [ -e $i ]; then
-		  rm $i
-	   fi
-	done
 
 	# remove all temporary files
 	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
@@ -345,29 +360,58 @@ function gmap() {
 }
 
 function pgmap() {
-       check_sample; check_ref; check_bwa_idx; check_gatk_dict; check_samtools_fai;
-       mkdir -p aligned
-       awk '{print $1,$2,$3,$4}' ${meta} > metadat.txt
-       id="metadat.txt"
-       n=$((50/$t))
-       echo -e "GATK-BWA Alignment and Mark Duplicates. Your jobs will be run in $n parallel runs\n"
-       #--- Make unmapped BAM files from raw FASTQ files
-       cat ${id} | parallel --col-sep ' ' echo "FastqToSam -F1 ${dname}{1} -F2 ${dname}{2} -SM {3} -PL {4} -RG {3} -O aligned/{3}.unmapped.bam" | xargs -I input -P$n sh -c "$gatk input"
-       cat ${id} | parallel --col-sep ' ' echo "mem -t $t $ref ${dname}{1} ${dname}{2} -o aligned/{3}.mapped.sam" | xargs -I input -P$n sh -c "$bwa input"
-       cat ${id} | parallel --col-sep ' ' echo "view -O BAM -h aligned/{3}.mapped.sam -o aligned/{3}.unsorted.mapped.bam" | xargs -I input -P$n sh -c "$samtools input"
-       cat ${id} | parallel --col-sep ' ' echo "sort -O BAM --reference $ref -@ $t -o aligned/{3}.mapped.bam aligned/{3}.unsorted.mapped.bam" | xargs -I input -P$n sh -c "$samtools input"
-       rm aligned/*.sam aligned/*.unsorted.mapped.bam
-       cat ${id} | parallel --col-sep ' ' echo "MergeBamAlignment -O aligned/{3}.bam -R ${ref} -UNMAPPED aligned/{3}.unmapped.bam -ALIGNED aligned/{3}.mapped.bam" | xargs -I input -P$n sh -c "$gatk input"
-       rm aligned/*mapped.bam
-       #--- Mark duplicates (and remove)
-       #mkdir -p mkd
-       cat ${id} | parallel --col-sep ' ' echo MarkDuplicates -I aligned/{3}.bam -O aligned/{3}_mkdups.bam -M aligned/{3}_marked_dup_metrics.txt --REMOVE_DUPLICATES false | xargs -I input -P$n sh -c "$gatk input"
-       cat ${id} | parallel --col-sep ' ' echo index -b aligned/{3}_mkdups.bam | xargs -I input -P$n sh -c "$samtools input"
-       cat ${id} | parallel --col-sep ' ' rm aligned/{3}.bam
+
+	tmp_prefix=${tmp_dir}/$(random_id)_
+	check_sample || return 1
+	check_ref || return 1
+	check_bwa_idx || return 1
+	check_gatk_dict || return 1 
+	check_samtools_fai || return 1
+
+	id="${tmp_prefix}metadat.txt"
+	awk '{print $1,$2,$3,$4}' ${meta} | sed '/^#/d' > $id
+
+	n=$((50/$t))
+	echo -e "GATK-BWA Alignment and Mark Duplicates.\nYour jobs will be split across $n parallel threads\n"
+	#--- Make unmapped BAM files from raw FASTQ files
+	cat ${id} | parallel --col-sep ' ' echo "FastqToSam -F1 ${rds_dir}/{1} -F2 ${rds_dir}/{2} -SM {3} -PL {4} -RG {3} -O ${bam_dir}/{3}.unmapped.bam" | xargs -I input -P$n sh -c "$gatk input" \
+			|| { echo 'FastqToSam step failed'; return 1; }
+	# align each sample's set of reads to the reference
+	cat ${id} | parallel --col-sep ' ' echo "mem -t $t $ref ${rds_dir}/{1} ${rds_dir}/{2} -o ${sam_dir}/{3}.mapped.sam" | xargs -I input -P$n sh -c "$bwa input" \
+			|| { echo 'bwa mem step failed'; return 1; }
+	# convert aligned sequence sam files to bam
+	cat ${id} | parallel --col-sep ' ' echo "view -O BAM -h ${sam_dir}/{3}.mapped.sam -o ${bam_dir}/{3}.unsorted.mapped.bam" | xargs -I input -P$n sh -c "$samtools input" \
+			|| { echo 'sam to bam step failed'; return 1; }
+	# sort the bam files
+	cat ${id} | parallel --col-sep ' ' echo "sort -O BAM --reference $ref -@ $t -o ${bam_dir}/{3}.mapped.bam ${bam_dir}/{3}.unsorted.mapped.bam" | xargs -I input -P$n sh -c "$samtools input" \
+			|| { echo 'sorting the bam files step failed'; return 1; }
+	# merge bam alignment files
+	cat ${id} | parallel --col-sep ' ' echo "MergeBamAlignment -O ${bam_dir}/{3}.bam -R ${ref} -UNMAPPED ${bam_dir}/{3}.unmapped.bam -ALIGNED ${bam_dir}/{3}.mapped.bam" | xargs -I input -P$n sh -c "$gatk input" \
+			|| { echo 'merge bam alignment step failed'; return 1; }
+
+	#--- Mark duplicates
+	cat ${id} | parallel --col-sep ' ' echo MarkDuplicates -I ${bam_dir}/{3}.bam -O ${bam_dir}/{3}_mkdups.bam -M ${bam_dir}/{3}_marked_dup_metrics.txt --REMOVE_DUPLICATES false | xargs -I input -P$n sh -c "$gatk input" \
+			|| { echo 'failed to mark duplicates'; return 1; }
+	cat ${id} | parallel --col-sep ' ' echo index -b ${bam_dir}/{3}_mkdups.bam | xargs -I input -P$n sh -c "$samtools input" \
+			|| { echo 'failed to index bam files'; return 1; }
+
+	# remove all temporary files
+	{
+		cat ${id} | parallel --col-sep ' ' rm ${bam_dir}/{3}.bam && \
+		cat ${id} | parallel --col-sep ' ' rm ${sam_dir}/{3}.mapped.sam && \
+		cat ${id} | parallel --col-sep ' ' rm ${bam_dir}/{3}*mapped.bam
+	} || { echo 'failed to remove intermediate bam and sam files'; return 1; }
+	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
+
 }
 
-#--- Indel Realignment (THis will not be run if GATK is used since HaplotypeCaller essentially does local rearrangements)
-
+#  indelreal(), pindelreal()
+#
+#	* Indel Realignment 
+#	* (THis will not be run if GATK is used since HaplotypeCaller 
+#	* essentially does local rearrangements).
+#	* THIS FUNCTION DOES NOT YET WORK IN THE NEW CONTEXT
+#
 function indelreal() {
        check_ref; check_bamlist
        #--- Indel realignment (This requires GATKv3.x. Point to your installation of it in 'gatk3_esoh' above)
@@ -398,27 +442,39 @@ function pindelreal() {
        if [ -e "ir.ks.txt" -o -e "rtc.ks.txt" ]; then rm ir.ks.txt || rm rtc.ks.txt; fi
 }
 
-#--- Base Quality Score Recallibration (BQSR)
+#  bqsr(), pbqsr()
+#
+#	* Base Quality Score Recallibration (BQSR)
+#
+#	inputs:
+#		+ bam list
 function bqsr() {
-       if [[ "$dname" == NULL ]]; then
-          echo -e "\n\e[38;5;1mERROR\e[0m: -p,--path not provided! Please specify path to BAM files"; 1>&2;
-          exit 1;
-       fi
-       check_ref; check_gatk_dict; check_bamlist
-       id="$blist"
-       n=$((50/$t))
-       mkdir -p bqsr; mkdir -p aligned
-       while read -r line; do
-             gatk BaseRecalibrator -I ${dname}/${line/.bam/} -R $ref $(if [[ $ks != NULL ]]; then check_sites; if [ -e "bqsr.ks.txt" -a -s "bqsr.ks.txt" ]; then rm rtc.ks.txt ir.ks.txt; cat bqsr.ks.txt; fi; fi) -O bqsr/${line/.bam/_recal_data.table}
-             gatk ApplyBQSR -R $ref -I ${dname}/${line/.bam/} --bqsr-recal-file bqsr/${line/.bam/_recal_data.table} -O aligned/${line/.bam/.mapped.bam}
-       done < ${id}
-       if [ -e "${id}" ]; then rm ${id}; fi
+
+	check_ref || return 1
+	check_gatk_dict || return 1
+	check_bamlist || return 1
+
+	id="$blist"
+	n=$((50/$t))
+
+	while read -r line; do
+		$gatk BaseRecalibrator \
+			-I ${dname}/${line/.bam/} \
+			-R $ref $(if [[ $ks != NULL ]]; then check_sites; if [ -e "bqsr.ks.txt" -a -s "bqsr.ks.txt" ]; then rm rtc.ks.txt ir.ks.txt; cat bqsr.ks.txt; fi; fi) \
+			-O bqsr/${line/.bam/_recal_data.table}
+		$gatk ApplyBQSR \
+			-R $ref 
+			-I ${dname}/${line/.bam/} 
+			--bqsr-recal-file bqsr/${line/.bam/_recal_data.table} \
+			-O aligned/${line/.bam/.mapped.bam}
+	done < ${id}
+	if [ -e "${id}" ]; then rm ${id}; fi
 }
 
 function pbqsr() {
        if [[ "$dname" == NULL ]]; then
           echo -e "\n\e[38;5;1mERROR\e[0m: -p,--path not provided! Please specify path to BAM files"; 1>&2;
-          exit 1;
+          return 1;
        fi
        check_ref; check_gatk_dict; check_bamlist
        id="$blist"
@@ -593,7 +649,7 @@ function varcall() {
               elif [ -f "$v" -a ! -s "$v" ]; then
                  rm $v
                  echo -e "\e[38;5;1mERROR\e[0m: Problem with gvcf list. Did you forget to specify the [CORRECT] path to gvcf file(s) with -p,--path ?" 1>&2;
-                 exit 1;
+                 return 1;
               fi
               if [ -e $v ]; then rm $v; fi
          elif [ -f $blist -a -s $blist ]; then
@@ -638,14 +694,14 @@ function varcall() {
               elif [ -f "$v" -a ! -s "$v" ]; then
                  rm $v
                  echo -e "\e[38;5;1mERROR\e[0m: Problem with bam list. Did you forget to specify the [CORRECT] path to bam file(s) with -p,--path ?" 1>&2;
-                 exit 1;
+                 return 1;
               fi
          elif [[ ( ( -f $glist ) && ( ! -s $glist ) ) || ( ( -f $blist ) && ( ! -s $blist ) ) ]]; then
               echo -e "\e[38;5;1mERROR\e[0m: Problem with [gvcf/bam] list. Please check and correct." 1>&2;
-              exit 1;
+              return 1;
          else       
              gcallhelp 1>&2;
-             exit 1;
+             return 1;
          fi
 }
 
@@ -716,7 +772,7 @@ function bcfcall() {
       elif [ -f "$v" -a ! -s "$v" ]; then
          rm $v
          echo -e "\e[38;5;1mERROR\e[0m: Problem with bam list. Did you forget to specify the [CORRECT] path to bam file(s) with -p,--path ?" 1>&2;
-         exit 1;
+         return 1;
       fi
 
 #      echo -e "Variant Calling - BCFTOOLS"
@@ -748,24 +804,24 @@ function bcfcall() {
 function check_ref() {
        if [[ "$ref" == NULL ]]; then
           echo -e "\e[38;5;1mERROR\e[0m: -r,--ref not provided! Exiting..."; 1>&2;
-          exit 1
+          return 1
        elif [ ! -f "$ref" -o ! -s "$ref" ]; then
           echo -e "\e[38;5;1mERROR\e[0m: Problem with reference file. Please check that it exists and is not empty..."; 1>&2;
-          exit 1
+          return 1
        fi
 }
 function check_bwa_idx() {
        check_ref
        if [[ ! -f "${ref}.bwt" ]]; then
             echo "${error}: can't find the bwa index for $ref"
-			exit 1
+			return 1
        fi
 }
 function check_gatk_dict() {
 	check_ref
 	if [[ ! -f "${ref/.fasta/.dict}" ]]; then
 		echo "${error}: can't find gatk reference dictionary"
-		exit 1
+		return 1
 	fi
 }
 function check_samtools_fai() {
@@ -790,7 +846,7 @@ function check_adapter() {
     function warning() {
         echo -e """\e[38;5;3mWARNING\e[0m: The adapter was not found! Make sure it is present in the current directory""" 1>&2;
         echo -e """\e[38;5;6m===>\e[0m Attempting to trim without adapter. Press \e[38;5;6mCTRL+C\e[0m to stop\n""" 1>&2;
-        exit 1;
+        return 1;
 
     }
     case "$(echo "$adap" | tr [:lower:] [:upper:])" in
@@ -800,7 +856,7 @@ function check_adapter() {
         T3P) if [[ -e "TruSeq3-PE.fa" ]]; then echo ILLUMINACLIP:TruSeq3-PE.fa:2:30:10;  else warning; fi ;;
         T2S) if [[ -e "TruSeq2-SE.fa" ]]; then echo ILLUMINACLIP:TruSeq2-SE.fa:2:30:10;  else warning; fi ;;
         T3S) if [[ -e "TruSeq3-SE.fa" ]]; then echo ILLUMINACLIP:TruSeq3-SE.fa:2:30:10;  else warning; fi ;;
-         *) echo -e """\e[38;5;3mWARNING\e[0m: No such adapter '$adap'! Type --help for usage\n\e[38;5;6m===>\e[0m Attempting to trim without adapter. Press \e[38;5;6mCTRL+C\e[0m to stop\n""" 1>&2; exit 1; ;;
+         *) echo -e """\e[38;5;3mWARNING\e[0m: No such adapter '$adap'! Type --help for usage\n\e[38;5;6m===>\e[0m Attempting to trim without adapter. Press \e[38;5;6mCTRL+C\e[0m to stop\n""" 1>&2; return 1; ;;
     esac
 }
 
@@ -809,16 +865,16 @@ function check_sample() {
 	# check meta variabe was set
 	if [[ "$meta" == NULL ]]; then
 		echo -e "\e[38;5;1mERROR\e[0m: -s,--sample_list not provided! Exiting..."; 1>&2;
-		exit 1
+		return 1
 	elif [ -f $meta -a -s $meta ]; then
 		for i in $(awk '{print $1}' $meta); do
 			[ ! $i == "#"* ] && continue
 			if [ ! -f ${rds_dir}$i ]; then
 				echo -e "\e[38;5;1mERROR\e[0m: '${i}' was not found in the directory '${rds_dir}'.\nPlease specify the path with -p or --path or check that the files in the path are the same in the sample list" 1>&2;
-				exit 1;
+				return 1;
 			elif [ -f ${rds_dir}${i} -a ! -s ${rds_dir}${i} ]; then
 				echo -e "\e[38;5;1mERROR\e[0m: '${i}' may be empty. Please check and correct '${rds_dir}'." 1>&2;
-				exit 1;
+				return 1;
 		   fi
 		done
 	elif [ -f $meta -a ! -s $meta ]; then
@@ -843,7 +899,7 @@ function check_fq() {
     if [[ ! -s "${tmp_prefix}fwd.txt" ]]; then
        echo -e "\n\e[38;5;1mERROR\e[0m: No fastq/SAM/BAM file found in the specified location: '$dname'\nPlease specify path to Fastq/SAM/BAM files using -p or --path\n"
        rm ${tmp_prefix}fwd.txt 1>&2;
-       exit 1;
+       return 1;
     fi
 
 	> ${tmp_prefix}rev.txt
@@ -867,29 +923,28 @@ function check_fq() {
 
 #--- Prepare input for BQSR
 function check_bamlist() {
-if [[ "$blist" == NULL ]]; then
-   if [ -f "bam.list" ]; then
-      rm bam.list;
-   fi;
-   for i in *.bam; do
-      if [[ ( -f ${i} ) && ( -s ${i} ) ]]; then  # if bam files exist in the current directory and are not empty
-         basename -a $(ls $i) >> bam.list;
-      elif [[ -d aligned ]]; then # if a directory exists called aligned
-         for j in aligned/*.bam; do
-             if [[ ( -f ${j} ) && ( -s ${j} ) ]]; then # if bam files exist in the aligned directory and are not empty
-                basename -a $(ls $j) >> bam.list;
-             fi;
-         done;
-      else
-         echo -e "\n\e[38;5;1mERROR\e[0m: Please check that there are bam files in the path $dname\n" 1>&2;
-	 exit 1;
-      fi;
-   done;
-   if [ -f "bam.list" -a -s "bam.list" ]; then
-      echo -e "\n\e[38;5;6mNOTE\e[0m: $(cat bam.list | wc -l) BAM file(s) counted in '$(readlink -f $(dirname $(cat bam.list | head -1)))/' and will be used! Press CTRL+C to stop\n";
-      sleep 1;
-   fi;
-fi
+	tmp_prefix=$1
+
+	[[ ! "$blist" == NULL ]] && return 0
+
+	for i in *.bam; do
+	  if [[ ( -f ${i} ) && ( -s ${i} ) ]]; then  # if bam files exist in the current directory and are not empty
+		 basename -a $(ls $i) >> bam.list;
+	  elif [[ -d aligned ]]; then # if a directory exists called aligned
+		 for j in aligned/*.bam; do
+		     if [[ ( -f ${j} ) && ( -s ${j} ) ]]; then # if bam files exist in the aligned directory and are not empty
+		        basename -a $(ls $j) >> bam.list;
+		     fi;
+		 done;
+	  else
+		 echo -e "\n\e[38;5;1mERROR\e[0m: Please check that there are bam files in the path $dname\n" 1>&2;
+	 return 1;
+	  fi;
+	done;
+	if [ -f "bam.list" -a -s "bam.list" ]; then
+	  echo -e "\n\e[38;5;6mNOTE\e[0m: $(cat bam.list | wc -l) BAM file(s) counted in '$(readlink -f $(dirname $(cat bam.list | head -1)))/' and will be used! Press CTRL+C to stop\n";
+	  sleep 1;
+	fi;
 }
 
 #--- Prepare input for BQSR
@@ -909,7 +964,7 @@ if [[ ( "$glist" == NULL ) ]]; then
          done;
       else
          echo -e "\n\e[38;5;1mERROR\e[0m: Please check that there are GVCF files in the path $dname\n" 1>&2;
-         #exit 1;
+         #return 1;
       fi;
    done;
    if [ -f "gvcf.list" -a -s "gvcf.list" ]; then
@@ -930,13 +985,13 @@ fi
 
 function prep_trim() {
 	tmp_prefix=$1
-    check_fq $tmp_prefix
+    check_fq $tmp_prefix || return 1
 
     #--- On checking for fastq files above, we checked for SAM/BAM as well. If the function picked SAM/BAM, we definitely wanna spill errors since we can't trim SAM/BAM here
     for i in $(awk '{print $1}' ${tmp_prefix}forward_reverse.txt | head -1); do
         if [[ ( ${i} == *.sam ) || ( ${i} == *.sam.gz ) || ( "${i}" == *.bam ) ]]; then
            echo -e "\n\e[38;5;1mERROR\e[0m: No fastq/SAM/BAM file found in the specified location: '${rds_dir}'\nPlease specify path to Fastq/SAM/BAM files using -p or --path\n" 1>&2;
-           exit 1;
+           return 1;
            rm ${tmp_prefix}forward_reverse.txt ${tmp_prefix}fastq.input.txt
         fi
     done
@@ -947,9 +1002,9 @@ function prep_trim() {
 #--- Prepare alignment/mapping input
 function prep_map() {
 	tmp_prefix=$1
-	check_ref
-	check_fq $tmp_prefix
-	prep_trim $tmp_prefix
+	check_ref || return 1
+	check_fq $tmp_prefix || return 1
+	prep_trim $tmp_prefix || return 1
 
 	if [ -e "${tmp_prefix}forward_reverse.txt" -a -s "${tmp_prefix}forward_reverse.txt" ]; then
 		awk -v i="${rds_dir}/" -v o="${sam_dir}/" '{print i$1,i$2,"-o",o$1".sam"}' ${tmp_prefix}forward_reverse.txt > ${tmp_prefix}align.input.txt
