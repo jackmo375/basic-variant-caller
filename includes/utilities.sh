@@ -5,8 +5,9 @@ nc='\033[0m' # No Color
 error='\e[38;5;1mERROR\e[0m'
 
 # generic useful functions
-custom_call()
-{
+
+custom_call() {
+	# for *top level functions*
 	# call tasks above with colored output
 	# and terminate the workflow on errors
 
@@ -14,7 +15,7 @@ custom_call()
  
 	$1 \
 		|| { printf "${red}...failed!${nc}"; echo; exit 1; } \
-		&& { printf "${green}...done."${nc}; echo;}
+		&& { printf "${green}...done."${nc}; echo; }
 }
 
 value_from_json() {

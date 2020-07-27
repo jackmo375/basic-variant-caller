@@ -42,13 +42,15 @@ workflow() { argv=("$@")
 
 	##start
 
-	##custom_call pfq "checking read file quality..."
+	##custom_call fq "checking read file quality..."
 
 	##custom_call ptrim "trimming read files..."
 
 	##custom_call pbmap "aligning reads with bwa..."
 
-	custom_call pgmap "GATKv4 BWA Mapping/Alignment..."
+	##custom_call pgmap "GATKv4 BWA Mapping/Alignment..."
+
+	custom_call bqsr "Base Quality Score Recallibration (BQSR)..."
 	
 }
 

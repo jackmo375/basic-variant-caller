@@ -79,11 +79,9 @@ function start() {
 function fq() {
 
 	tmp_prefix=${tmp_dir}/$(random_id)_
-	check_sample
+	check_sample || return 1
+	check_fq $tmp_prefix || return 1
 
-	echo ${tmp_prefix}
-
-    check_fq $tmp_prefix
     id=${tmp_prefix}fastq.input.txt; odr="${fqc_dir}/"
     while read -r line; do
         echo -e "running FastQC"
@@ -92,6 +90,7 @@ function fq() {
 
 	# remove all temporary files
 	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
+
 }
 
 function pfq() {
@@ -447,28 +446,43 @@ function pindelreal() {
 #	* Base Quality Score Recallibration (BQSR)
 #
 #	inputs:
-#		+ bam list
+#		+ bam list (optional)
+#		+ The input read data whose base quality scores need to be assessed.
+#		+ A database of known polymorphic sites to skip over.
+#	tools:
+#		+ gatk 4.0 (BaseRecalibrator, Apply BQSR)
+#	outputs:
+#		+ A GATK Report file with many tables
 function bqsr() {
 
+	tmp_prefix=${tmp_dir}/$(random_id)_
 	check_ref || return 1
 	check_gatk_dict || return 1
-	check_bamlist || return 1
+	check_bamlist $tmp_prefix || return 1
 
-	id="$blist"
+	id=${tmp_prefix}bam.list
 	n=$((50/$t))
 
 	while read -r line; do
+		echo $line
+		return 1
 		$gatk BaseRecalibrator \
 			-I ${dname}/${line/.bam/} \
 			-R $ref $(if [[ $ks != NULL ]]; then check_sites; if [ -e "bqsr.ks.txt" -a -s "bqsr.ks.txt" ]; then rm rtc.ks.txt ir.ks.txt; cat bqsr.ks.txt; fi; fi) \
-			-O bqsr/${line/.bam/_recal_data.table}
+			-O bqsr/${line/.bam/_recal_data.table} \
+			|| { echo "BaseRecalibrator step failed"; return 1; }
 		$gatk ApplyBQSR \
 			-R $ref 
 			-I ${dname}/${line/.bam/} 
 			--bqsr-recal-file bqsr/${line/.bam/_recal_data.table} \
-			-O aligned/${line/.bam/.mapped.bam}
+			-O aligned/${line/.bam/.mapped.bam} \
+			|| { echo "ApplyBQSR step failed"; return 1; }
 	done < ${id}
 	if [ -e "${id}" ]; then rm ${id}; fi
+
+	# remove all temporary files
+	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
+
 }
 
 function pbqsr() {
@@ -880,6 +894,7 @@ function check_sample() {
 	elif [ -f $meta -a ! -s $meta ]; then
 		echo -e "\e[38;5;1mERROR\e[0m: '$meta' seems to be empty! Please check and correct." 1>&2;
 	fi
+
 }
 
 #--- Check Fastq/SAM/BAM and make input files
@@ -921,30 +936,32 @@ function check_fq() {
 
 }
 
-#--- Prepare input for BQSR
+#  Prepare input for BQSR
+#	* check that a list of bam files
+#	* has been provided by the user
+#	* via $blist, 
+#	* or create one from the sample list
+#	* via $meta
+# 
 function check_bamlist() {
 	tmp_prefix=$1
 
-	[[ ! "$blist" == NULL ]] && return 0
+	if [[ ! $blist==NULL ]]; then
+		echo "using user's input bam list $blist"
+		cat $blist > ${tmp_prefix}bam.list 
+		return 0
+	else
+		echo "locating bam files attached to the provided sample ids"
+		samples=$(sed '/^#/d' ${meta} | awk '{print $3}')
+		for i in ${samples[@]}; do
+			for f in ${bam_dir}/$i*.bam; do
+				basename $f
+			done
+		done > ${tmp_prefix}bam.list
+	fi
 
-	for i in *.bam; do
-	  if [[ ( -f ${i} ) && ( -s ${i} ) ]]; then  # if bam files exist in the current directory and are not empty
-		 basename -a $(ls $i) >> bam.list;
-	  elif [[ -d aligned ]]; then # if a directory exists called aligned
-		 for j in aligned/*.bam; do
-		     if [[ ( -f ${j} ) && ( -s ${j} ) ]]; then # if bam files exist in the aligned directory and are not empty
-		        basename -a $(ls $j) >> bam.list;
-		     fi;
-		 done;
-	  else
-		 echo -e "\n\e[38;5;1mERROR\e[0m: Please check that there are bam files in the path $dname\n" 1>&2;
-	 return 1;
-	  fi;
-	done;
-	if [ -f "bam.list" -a -s "bam.list" ]; then
-	  echo -e "\n\e[38;5;6mNOTE\e[0m: $(cat bam.list | wc -l) BAM file(s) counted in '$(readlink -f $(dirname $(cat bam.list | head -1)))/' and will be used! Press CTRL+C to stop\n";
-	  sleep 1;
-	fi;
+	[[ -s ${tmp_prefix}bam.list ]] || { echo "\n\e[38;5;1mERROR\e[0m: no bam files were found, please check and try again"; return 1; }
+
 }
 
 #--- Prepare input for BQSR
