@@ -50,8 +50,10 @@ workflow() { argv=("$@")
 
 	##custom_call pgmap "GATKv4 BWA Mapping/Alignment..."
 
-	custom_call bqsr "Base Quality Score Recallibration (BQSR)..."
+	##custom_call bqsr "Base Quality Score Recallibration (BQSR)..."
 	
+	custom_call varcall "Variant Calling with GATK (Single Cohort Joint) in Serial..."
+
 }
 
 

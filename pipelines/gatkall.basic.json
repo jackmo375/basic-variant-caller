@@ -1,0 +1,6 @@
+{
+  "meta_base": "lambda-virus.txt",
+  "ref_base": "lambda-virus.fa",
+  "threads": 8,
+  "trim_minlen": 40
+}

@@ -78,14 +78,15 @@ function start() {
 #
 function fq() {
 
-	tmp_prefix=${tmp_dir}/$(random_id)_
-	check_sample || return 1
-	check_fq $tmp_prefix || return 1
+	local tmp_prefix=${tmp_dir}/$(random_id)_
+	local id=${tmp_prefix}fastq.input.txt
+	local odr="${fqc_dir}/"
 
-    id=${tmp_prefix}fastq.input.txt; odr="${fqc_dir}/"
+	prep_fq $tmp_prefix || return 1
+
     while read -r line; do
         echo -e "running FastQC"
-        $fastqc -t $t $line -o $odr
+        $fastqc -t ${inputs["threads"]} $line -o $odr
     done < $id
 
 	# remove all temporary files
@@ -94,16 +95,17 @@ function fq() {
 }
 
 function pfq() {
-	tmp_prefix=${tmp_dir}/$(random_id)_
-	check_sample || return 1
-	check_fq $tmp_prefix || return 1
+	local tmp_prefix=${tmp_dir}/$(random_id)_
+	local id=${tmp_prefix}fastq.input.txt
+	local odr="${fqc_dir}/"
+	local n=$((50/${inputs["threads"]}))
 
-	id=${tmp_prefix}fastq.input.txt; odr="${fqc_dir}/"
-	n=$((50/$t))
+	prep_fq $tmp_prefix || return 1
+
 	echo -e "running FastQC"
 	echo -e "Your jobs will be split across $n parallel threads"
 	cat $id | \
-		parallel --col-sep ' ' echo -e "-t $t {1} $(if [ -n {2} ]; then echo {2}; fi) -o $odr" | \
+		parallel --col-sep ' ' echo -e "-t ${inputs["threads"]} {1} $(if [ -n {2} ]; then echo {2}; fi) -o $odr" | \
 		xargs -I input -P$n sh -c "$fastqc input"
 
 	# remove all temporary files
@@ -124,7 +126,6 @@ function pfq() {
 function trim() {
 
 	tmp_prefix=${tmp_dir}/$(random_id)_
-	check_sample || return 1
 	prep_trim $tmp_prefix || return 1
 
 	id=${tmp_prefix}trim.input.txt
@@ -132,12 +133,13 @@ function trim() {
 		echo -e "running Trimmomatic"
 		java -jar $trimmomatic PE \
               -phred33 $line \
-              $(if [[ $adap != NULL ]]; then checkadapter; fi) \
-              LEADING:$leadx \
-              TRAILING:$trailx \
+              $(if [[ ${inputs["trim_adap"]} != NULL ]]; then check_adapter; fi) \
+              LEADING:${inputs["trim_leadx"]} \
+              TRAILING:${inputs["trim_trailx"]} \
               SLIDINGWINDOW:4:15 \
-              MINLEN:${minlen} \
-              -threads $t
+              MINLEN:${inputs["trim_minlen"]} \
+              -threads ${inputs["threads"]} \
+              || { echo 'trimmomatic failed'; return 1; }
 	done < $id
 	
 	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
@@ -146,16 +148,16 @@ function trim() {
 function ptrim() {
 
 	tmp_prefix=${tmp_dir}/$(random_id)_
-	check_sample || return 1
 	prep_trim $tmp_prefix || return 1
 
 	id=${tmp_prefix}trim.input.txt
-	n=$((50/$t ))
+	n=$((50/${inputs["threads"]}))
 	echo -e "running Trimmomatic"
 	echo -e "Your jobs will be split across $n parallel threads"
 	cat $id | \
-		parallel --col-sep ' ' echo "PE -phred33 {} $(if [[ $adap != NULL ]]; then checkadapter; fi) LEADING:$leadx TRAILING:$trailx SLIDINGWINDOW:4:15 MINLEN:$minlen -threads $t" | \
-		xargs -I input -P$n sh -c "java -jar $trimmomatic input"
+		parallel --col-sep ' ' echo "PE -phred33 {} $(if [[ ${inputs["trim_adap"]} != NULL ]]; then check_adapter; fi) LEADING:${inputs["trim_leadx"]} TRAILING:${inputs["trim_trailx"]} SLIDINGWINDOW:4:15 MINLEN:${inputs["trim_minlen"]} -threads ${inputs["threads"]}" | \
+		xargs -I input -P$n sh -c "java -jar $trimmomatic input" \
+		|| { echo 'trimmomatic failed'; return 1; }
 	
 	# remove temporary files
 	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
@@ -298,16 +300,11 @@ function pbmap() {
 function gmap() {
 
 	tmp_prefix=${tmp_dir}/$(random_id)_
-	check_sample || return 1
-	check_ref || return 1
-	check_bwa_idx || return 1
-	check_gatk_dict || return 1 
-	check_samtools_fai || return 1
 
 	id="${tmp_prefix}metadat.txt"
-	awk '{print $1,$2,$3,$4}' ${meta} > $id
-	echo -e "GATK-BWA Alignment. Your jobs will run in serial\n"
+	awk '{print $1,$2,$3,$4}' ${inputs["meta"]} | sed '/^#/d' > $id
 
+	echo "performing alignment; your jobs will run in serial"
 	while read -r line; do
 		[[ "$line" == "#"* ]] && continue
 
@@ -320,8 +317,8 @@ function gmap() {
 			-O ${bam_dir}/$(echo $line | awk '{print $3}').unmapped.bam \
 			|| { echo 'FastqToSam step failed'; return 1; }
 		$bwa mem \
-			-t $t \
-			$ref $(echo $line | awk -v d="${rds_dir}/" '{print d$1,d$2}') \
+			-t ${inputs["threads"]} \
+			${inputs["ref"]} $(echo $line | awk -v d="${rds_dir}/" '{print d$1,d$2}') \
 			-o ${sam_dir}/$(echo $line | awk '{print d$3}').sam \
 			|| { echo 'bwa mem step failed'; return 1; }
 		$samtools view \
@@ -331,14 +328,14 @@ function gmap() {
 			|| { echo 'sam to bam step failed'; return 1; }
 		$samtools sort \
 			-O BAM \
-			--reference $ref \
-			-@ $t \
+			--reference ${inputs["ref"]} \
+			-@ ${inputs["threads"]} \
 			-o ${bam_dir}/$(echo $line | awk '{print $3}').mapped.bam \
 			${bam_dir}/$(echo $line | awk '{print $3}').bam \
 			|| { echo 'sorting the bam files step failed'; return 1; }
 		$gatk MergeBamAlignment \
 			-O ${bam_dir}/$(echo $line | awk '{print $3}').bam \
-			-R ${ref} \
+			-R ${inputs["ref"]} \
 			-UNMAPPED ${bam_dir}/$(echo $line | awk '{print $3}').unmapped.bam \
 			-ALIGNED ${bam_dir}/$(echo $line | awk '{print $3}').mapped.bam \
 			|| { echo 'merge bam alignment step failed'; return 1; }
@@ -350,7 +347,6 @@ function gmap() {
 		done
 
 		# do we not need to mark duplicates here too?
-
 	done < $id
 
 	# remove all temporary files
@@ -501,7 +497,19 @@ function pbqsr() {
        if [ -e "${id}" ]; then rm ${id}; fi
 }
 
-#--- Emite GVCFs from analysis-ready BAM files
+#  emite_gvcf, pemit_gvcf
+#
+#	* Emite GVCFs from analysis-ready BAM files
+#	* I think this subroutine needs renaming...
+#	inputs:
+#		+ analysis-ready bam files
+#
+#	tools required:
+#		+ gatk HaplotypeCaller
+#
+#	outputs:
+#		+ gvcf files (one per sample)
+#
 function emit_gvcfs() {
        check_ref; check_gatk_dict; #check_bamlist
        mkdir -p vcall
@@ -555,168 +563,244 @@ function genogvcfs() {
           -O vcall/${out}.vcf.gz 
 }
 
-#--- Variant Calling with GATK (Single Cohort Joint) in Serial
+#  varcall
+#
+#	* Variant Calling with GATK (Single Cohort Joint) in Serial
+#	inputs:
+#
+#	tools required:
+#
+#	outputs:
+#
 function varcall() {
-         if [[ ( $glist == NULL ) && ( $blist == NULL ) ]]; then
-            echo -e "\e[38;5;3mWARNING\e[0m: Neither -g,--gvcf_list nor -b,--bam_list provided... "
-            if [ -f "gvcf.list" ]; then rm gvcf.list; elif [ -f "bam.list" ]; then rm bam.list; fi
-            sleep 1;
-            if [ -d "vcall" -a -n "$(ls -A vcall)" ]; then 
-               echo -e "Checking GVCF files in $(readlink -f vcall)/..."; 
-               sleep 1;
-               for j in vcall/*.gvcf*; do
-                   if [ -f ${j} -a -s ${j} ]; then # if gvcf files exist in the vcall directory and are not empty
-                      echo "-V $j";
-                   fi
-               done | sed '/.tbi/d' > gvcf.list
-               dname="$(readlink -f vcall)/"
-               if [ -f "gvcf.list" -a -s "gvcf.list" ]; then
-                  echo -e "\n\e[38;5;6mNOTE\e[0m: $(cat gvcf.list | wc -l) valid GVCF file(s) counted in '$(readlink -f $dname)/' and will be used! Press CTRL+C to stop\n";
-                  sleep 1;
-                  v="gvcf.list"
-                 #check index of bam files
-                 gv="$(awk '{print $2}' $v)"
-                 for i in ${gv}; do
-                   if [[ ! -f "${i}.tbi" ]]; then
-                      echo "Generating VCF index: $i" 
-                      tabix -p vcf -f $i;
-                   fi
-                 done
-                  check_ref
-		  if [[ $(cat $v | wc -l) != 1 ]]; then
-                     combinegvcfs;
-                     rm $v
-		     echo "-V vcall/${out}.gvcf.gz" > genogvcf.in.txt
-		     v="genogvcf.in.txt"
-		  fi
-                  genogvcfs;
-                  rm $v
-               fi
-            elif [[ -d "aligned" ]]; then
-               echo -e "Checking BAM files in $(readlink -f aligned)/...";
-               sleep 1;
-               for j in aligned/*.bam; do
-                   if [ -f ${j} -a -s ${j} ]; then # if gvcf files exist in the vcall directory and are not empty
-                      echo "-I $j -O vcall/$(basename ${j/.bam/.gvcf.gz})";
-                   fi
-               done > bam.list
-               dname="$(readlink -f aligned)/"
-               if [ -f "bam.list" -a -s "bam.list" ]; then
-                  echo -e "\n\e[38;5;6mNOTE\e[0m: $(cat bam.list | wc -l) valid BAM file(s) counted in '$(readlink -f $dname)/' and will be used! Press CTRL+C to stop\n";
-                  sleep 1;
-                  v="bam.list"
-                  check_ref
-                  if [[ $cmd == "gatkcall" ]]; then
-                      emit_gvcfs; 
-                      awk '{print "-V",$4}' $v > gvcf.list; v="gvcf.list"; #Make GVCF list from BAM list after emmitting GVCFs to pass to CombineGVCFs
-                      combinegvcfs; genogvcfs
-                      rm $v
-                  elif [[ $cmd == "pgatkcall" ]]; then
-                      pemit_gvcfs; 
-                      awk '{print "-V",$4}' $v > gvcf.list; v="gvcf.list"; #Make GVCF list from BAM list after emmitting GVCFs to pass to CombineGVCFs
-                      combinegvcfs; genogvcfs
-                      rm $v
-                  fi
-               fi
-            fi
-         elif [ -f $glist -a -s $glist ]; then
-              mkdir -p vcall
-              #Get directory name of the gvcf files
-              dn="$(readlink -f $(dirname $(cat $glist | head -1)))/"
-              if [[ "$dname" == NULL ]]; then 
-                 dname="$dn"; 
-              fi
 
-             #Get basename of all gvcf files
-             for i in $(cat $glist); do
-                 if [ -f ${dname}$(basename ${i}) -a -s ${dname}$(basename ${i}) ]; then
-                    echo $(basename $i);
-                 fi
-              done > gb.list
+	local tmp_prefix=${tmp_dir}/$(random_id)_
+	prep_bamlist $tmp_prefix || return 1
 
-              for i in $(cat gb.list); do
-                 if [ -f ${dname}${i} -a -s ${dname}${i} ]; then
-                    echo "-V ${dname}${i}";
-                 fi
-              done > g.list
-              mv g.list ${glist/.*/.gvcfs.in.txt}
-              v="${glist/.*/.gvcfs.in.txt}"
-              if [ -e gb.list ]; then rm gb.list; fi
-              if [ -f "$v" -a -s "$v" ]; then
-                 echo -e "\n\e[38;5;6mNOTE\e[0m: $(cat $glist | wc -l) valid GVCF file(s) counted in '$(readlink -f $dname)/' and will be used! Press CTRL+C to stop\n";
-                 sleep 1;
-                 check_ref
-                 for i in $(cut -f2 -d' ' ${v}); do
-                   if [[ ! -f "${i}.tbi" ]]; then
-                      echo "Generating VCF index: $i" 
-                      tabix -p vcf -f $i;
-                   fi
-                 done
-                 if [[ $(cat $v | wc -l) != 1 ]]; then
-                     combinegvcfs;
-                     rm $v
-                     echo "-V vcall/${out}.gvcf.gz" > genogvcf.in.txt
-                     v="genogvcf.in.txt"
-                  fi
-                  genogvcfs;
-                  rm $v
-              elif [ -f "$v" -a ! -s "$v" ]; then
-                 rm $v
-                 echo -e "\e[38;5;1mERROR\e[0m: Problem with gvcf list. Did you forget to specify the [CORRECT] path to gvcf file(s) with -p,--path ?" 1>&2;
-                 return 1;
-              fi
-              if [ -e $v ]; then rm $v; fi
-         elif [ -f $blist -a -s $blist ]; then
+	#Get directory name of the bam files
+	dn="$(readlink -f $(dirname $(cat $blist | head -1)))/"
+	if [[ "$dname" == NULL ]]; then 
+		dname="$dn"; 
+	fi
 
-              #Get directory name of the bam files
-              dn="$(readlink -f $(dirname $(cat $blist | head -1)))/"
-              if [[ "$dname" == NULL ]]; then 
-                 dname="$dn"; 
-              fi
+	# Get basename of all bam files
+	for i in $(cat $blist); do
+		if [ -f  ${dname}$(basename ${i}) -a -s  ${dname}$(basename ${i}) ]; then
+			echo $(basename $i);
+		fi
+	done > bb.list
 
-             #Get basename of all bam files
-              for i in $(cat $blist); do
-                 if [ -f  ${dname}$(basename ${i}) -a -s  ${dname}$(basename ${i}) ]; then
-                    echo $(basename $i);
-                 fi
-              done > bb.list
+	for i in $(cat bb.list); do
+	if [ -f ${dname}${i} -a -s ${dname}${i} ]; then
+		echo "-I ${dname}${i} -O vcall/$(basename ${i/.bam/.gvcf.gz})"
+	fi
+	done > b.list
 
-              for i in $(cat bb.list); do
-                 if [ -f ${dname}${i} -a -s ${dname}${i} ]; then
-                    echo "-I ${dname}${i} -O vcall/$(basename ${i/.bam/.gvcf.gz})"
-                 fi
-              done > b.list
-              mv b.list ${blist/.*/.hapcaller.in.txt}
-              v="${blist/.*/.hapcaller.in.txt}"
-              if [ -f bb.list ]; then rm bb.list; fi
-              if [ -f "$v" -a -s "$v" ]; then
-                 echo -e "\n\e[38;5;6mNOTE\e[0m: $(cat $blist | wc -l) valid BAM file(s) counted in '$(readlink -f $dname)/' and will be used! Press CTRL+C to stop\n";
-                 sleep 1;
-                  check_ref
-                  if [[ $cmd == "gatkcall" ]]; then
-                      emit_gvcfs; 
-                      awk '{print "-V",$4}' $v > gvcf.list; v="gvcf.list"; #Make GVCF list from BAM list after emmitting GVCFs to pass to CombineGVCFs
-                      combinegvcfs; 
-		      genogvcfs
-                  elif [[ $cmd == "pgatkcall" ]]; then
-                      pemit_gvcfs; 
-                      awk '{print "-V",$4}' $v > gvcf.list; v="gvcf.list"; #Make GVCF list from BAM list after emmitting GVCFs to pass to CombineGVCFs
-                      combinegvcfs; 
-		      genogvcfs
-                  fi
-                 if [ -f $v ]; then rm $v; fi
-              elif [ -f "$v" -a ! -s "$v" ]; then
-                 rm $v
-                 echo -e "\e[38;5;1mERROR\e[0m: Problem with bam list. Did you forget to specify the [CORRECT] path to bam file(s) with -p,--path ?" 1>&2;
-                 return 1;
-              fi
-         elif [[ ( ( -f $glist ) && ( ! -s $glist ) ) || ( ( -f $blist ) && ( ! -s $blist ) ) ]]; then
-              echo -e "\e[38;5;1mERROR\e[0m: Problem with [gvcf/bam] list. Please check and correct." 1>&2;
-              return 1;
-         else       
-             gcallhelp 1>&2;
-             return 1;
-         fi
+	mv b.list ${blist/.*/.hapcaller.in.txt}
+	v="${blist/.*/.hapcaller.in.txt}"
+	if [ -f bb.list ]; then rm bb.list; fi
+
+	if [ -f "$v" -a -s "$v" ]; then
+		echo -e "\n\e[38;5;6mNOTE\e[0m: $(cat $blist | wc -l) valid BAM file(s) counted in '$(readlink -f $dname)/' and will be used! Press CTRL+C to stop\n";
+		sleep 1;
+		check_ref
+
+		if [[ $cmd == "gatkcall" ]]; then
+			emit_gvcfs; 
+			awk '{print "-V",$4}' $v > gvcf.list; v="gvcf.list"; #Make GVCF list from BAM list after emmitting GVCFs to pass to CombineGVCFs
+			combinegvcfs; 
+			genogvcfs
+		elif [[ $cmd == "pgatkcall" ]]; then
+			pemit_gvcfs; 
+			awk '{print "-V",$4}' $v > gvcf.list; v="gvcf.list"; #Make GVCF list from BAM list after emmitting GVCFs to pass to CombineGVCFs
+			combinegvcfs; 
+			genogvcfs
+		fi
+
+		if [ -f $v ]; then rm $v; fi
+	      
+	elif [ -f "$v" -a ! -s "$v" ]; then
+		rm $v
+		echo -e "\e[38;5;1mERROR\e[0m: Problem with bam list. Did you forget to specify the [CORRECT] path to bam file(s) with -p,--path ?" 1>&2;
+		return 1;
+	fi
+
+	return 0
+
+
+#-------------------------------
+
+
+
+	# case 1:
+	if [[ ( $glist == NULL ) && ( $blist == NULL ) ]]; then
+	    echo -e "\e[38;5;3mWARNING\e[0m: Neither -g,--gvcf_list nor -b,--bam_list provided... "
+	    if [ -f "gvcf.list" ]; then rm gvcf.list; elif [ -f "bam.list" ]; then rm bam.list; fi
+	    sleep 1;
+	    if [ -d "vcall" -a -n "$(ls -A vcall)" ]; then 
+	       echo -e "Checking GVCF files in $(readlink -f vcall)/..."; 
+	       sleep 1;
+	       for j in vcall/*.gvcf*; do
+	           if [ -f ${j} -a -s ${j} ]; then # if gvcf files exist in the vcall directory and are not empty
+	              echo "-V $j";
+	           fi
+	       done | sed '/.tbi/d' > gvcf.list
+	       dname="$(readlink -f vcall)/"
+	       if [ -f "gvcf.list" -a -s "gvcf.list" ]; then
+	          echo -e "\n\e[38;5;6mNOTE\e[0m: $(cat gvcf.list | wc -l) valid GVCF file(s) counted in '$(readlink -f $dname)/' and will be used! Press CTRL+C to stop\n";
+	          sleep 1;
+	          v="gvcf.list"
+	         #check index of bam files
+	         gv="$(awk '{print $2}' $v)"
+	         for i in ${gv}; do
+	           if [[ ! -f "${i}.tbi" ]]; then
+	              echo "Generating VCF index: $i" 
+	              tabix -p vcf -f $i;
+	           fi
+	         done
+	          check_ref
+	  if [[ $(cat $v | wc -l) != 1 ]]; then
+	             combinegvcfs;
+	             rm $v
+	     echo "-V vcall/${out}.gvcf.gz" > genogvcf.in.txt
+	     v="genogvcf.in.txt"
+	  fi
+	          genogvcfs;
+	          rm $v
+	       fi
+	    elif [[ -d "aligned" ]]; then
+	       echo -e "Checking BAM files in $(readlink -f aligned)/...";
+	       sleep 1;
+	       for j in aligned/*.bam; do
+	           if [ -f ${j} -a -s ${j} ]; then # if gvcf files exist in the vcall directory and are not empty
+	              echo "-I $j -O vcall/$(basename ${j/.bam/.gvcf.gz})";
+	           fi
+	       done > bam.list
+	       dname="$(readlink -f aligned)/"
+	       if [ -f "bam.list" -a -s "bam.list" ]; then
+	          echo -e "\n\e[38;5;6mNOTE\e[0m: $(cat bam.list | wc -l) valid BAM file(s) counted in '$(readlink -f $dname)/' and will be used! Press CTRL+C to stop\n";
+	          sleep 1;
+	          v="bam.list"
+	          check_ref
+	          if [[ $cmd == "gatkcall" ]]; then
+	              emit_gvcfs; 
+	              awk '{print "-V",$4}' $v > gvcf.list; v="gvcf.list"; #Make GVCF list from BAM list after emmitting GVCFs to pass to CombineGVCFs
+	              combinegvcfs; genogvcfs
+	              rm $v
+	          elif [[ $cmd == "pgatkcall" ]]; then
+	              pemit_gvcfs; 
+	              awk '{print "-V",$4}' $v > gvcf.list; v="gvcf.list"; #Make GVCF list from BAM list after emmitting GVCFs to pass to CombineGVCFs
+	              combinegvcfs; genogvcfs
+	              rm $v
+	          fi
+	       fi
+	    fi
+
+	# case 2:
+	elif [ -s $glist ]; then
+	      mkdir -p vcall
+	      #Get directory name of the gvcf files
+	      dn="$(readlink -f $(dirname $(cat $glist | head -1)))/"
+	      if [[ "$dname" == NULL ]]; then 
+	         dname="$dn"; 
+	      fi
+
+	     #Get basename of all gvcf files
+	     for i in $(cat $glist); do
+	         if [ -f ${dname}$(basename ${i}) -a -s ${dname}$(basename ${i}) ]; then
+	            echo $(basename $i);
+	         fi
+	      done > gb.list
+
+	      for i in $(cat gb.list); do
+	         if [ -f ${dname}${i} -a -s ${dname}${i} ]; then
+	            echo "-V ${dname}${i}";
+	         fi
+	      done > g.list
+	      mv g.list ${glist/.*/.gvcfs.in.txt}
+	      v="${glist/.*/.gvcfs.in.txt}"
+	      if [ -e gb.list ]; then rm gb.list; fi
+	      if [ -f "$v" -a -s "$v" ]; then
+	         echo -e "\n\e[38;5;6mNOTE\e[0m: $(cat $glist | wc -l) valid GVCF file(s) counted in '$(readlink -f $dname)/' and will be used! Press CTRL+C to stop\n";
+	         sleep 1;
+	         check_ref
+	         for i in $(cut -f2 -d' ' ${v}); do
+	           if [[ ! -f "${i}.tbi" ]]; then
+	              echo "Generating VCF index: $i" 
+	              tabix -p vcf -f $i;
+	           fi
+	         done
+	         if [[ $(cat $v | wc -l) != 1 ]]; then
+	             combinegvcfs;
+	             rm $v
+	             echo "-V vcall/${out}.gvcf.gz" > genogvcf.in.txt
+	             v="genogvcf.in.txt"
+	          fi
+	          genogvcfs;
+	          rm $v
+	      elif [ -f "$v" -a ! -s "$v" ]; then
+	         rm $v
+	         echo -e "\e[38;5;1mERROR\e[0m: Problem with gvcf list. Did you forget to specify the [CORRECT] path to gvcf file(s) with -p,--path ?" 1>&2;
+	         return 1;
+	      fi
+	      if [ -e $v ]; then rm $v; fi
+
+	# case 3:
+	elif [ -s $blist ]; then
+
+	      #Get directory name of the bam files
+	      dn="$(readlink -f $(dirname $(cat $blist | head -1)))/"
+	      if [[ "$dname" == NULL ]]; then 
+	         dname="$dn"; 
+	      fi
+
+	     # Get basename of all bam files
+	      for i in $(cat $blist); do
+	         if [ -f  ${dname}$(basename ${i}) -a -s  ${dname}$(basename ${i}) ]; then
+	            echo $(basename $i);
+	         fi
+	      done > bb.list
+
+	      for i in $(cat bb.list); do
+	         if [ -f ${dname}${i} -a -s ${dname}${i} ]; then
+	            echo "-I ${dname}${i} -O vcall/$(basename ${i/.bam/.gvcf.gz})"
+	         fi
+	      done > b.list
+	      mv b.list ${blist/.*/.hapcaller.in.txt}
+	      v="${blist/.*/.hapcaller.in.txt}"
+	      if [ -f bb.list ]; then rm bb.list; fi
+	      if [ -f "$v" -a -s "$v" ]; then
+	         echo -e "\n\e[38;5;6mNOTE\e[0m: $(cat $blist | wc -l) valid BAM file(s) counted in '$(readlink -f $dname)/' and will be used! Press CTRL+C to stop\n";
+	         sleep 1;
+	          check_ref
+	          if [[ $cmd == "gatkcall" ]]; then
+	              emit_gvcfs; 
+	              awk '{print "-V",$4}' $v > gvcf.list; v="gvcf.list"; #Make GVCF list from BAM list after emmitting GVCFs to pass to CombineGVCFs
+	              combinegvcfs; 
+	      genogvcfs
+	          elif [[ $cmd == "pgatkcall" ]]; then
+	              pemit_gvcfs; 
+	              awk '{print "-V",$4}' $v > gvcf.list; v="gvcf.list"; #Make GVCF list from BAM list after emmitting GVCFs to pass to CombineGVCFs
+	              combinegvcfs; 
+	      genogvcfs
+	          fi
+	         if [ -f $v ]; then rm $v; fi
+	      elif [ -f "$v" -a ! -s "$v" ]; then
+	         rm $v
+	         echo -e "\e[38;5;1mERROR\e[0m: Problem with bam list. Did you forget to specify the [CORRECT] path to bam file(s) with -p,--path ?" 1>&2;
+	         return 1;
+	      fi
+
+	# case 4:
+	elif [[ ( ( -f $glist ) && ( ! -s $glist ) ) || ( ( -f $blist ) && ( ! -s $blist ) ) ]]; then
+	      echo -e "\e[38;5;1mERROR\e[0m: Problem with [gvcf/bam] list. Please check and correct." 1>&2;
+	      return 1;
+
+	# case 5 (else):
+	else       
+	     gcallhelp 1>&2;
+	     return 1;
+	fi
 }
 
 function vqsr() {
@@ -816,32 +900,30 @@ function bcfcall() {
 
 #--- Check References and their indixes
 function check_ref() {
-       if [[ "$ref" == NULL ]]; then
-          echo -e "\e[38;5;1mERROR\e[0m: -r,--ref not provided! Exiting..."; 1>&2;
+       if [[ "${inputs["ref"]}" == NULL ]]; then
+          echo -e " -r,--ref not provided! Exiting..."; 1>&2;
           return 1
-       elif [ ! -f "$ref" -o ! -s "$ref" ]; then
-          echo -e "\e[38;5;1mERROR\e[0m: Problem with reference file. Please check that it exists and is not empty..."; 1>&2;
+       elif [ ! -f "${inputs["ref"]}" -o ! -s "${inputs["ref"]}" ]; then
+          echo -e " Problem with reference file. Please check that it exists and is not empty..."; 1>&2;
           return 1
        fi
 }
 function check_bwa_idx() {
-       check_ref
-       if [[ ! -f "${ref}.bwt" ]]; then
-            echo "${error}: can't find the bwa index for $ref"
+       if [[ ! -f "${inputs["ref"]}.bwt" ]]; then
+            echo " can't find the bwa index for ${inputs["ref"]}"
 			return 1
        fi
 }
 function check_gatk_dict() {
-	check_ref
-	if [[ ! -f "${ref/.fasta/.dict}" ]]; then
-		echo "${error}: can't find gatk reference dictionary"
+	if [[ ! -f "${inputs["ref"]/.fasta/.dict}" ]] || [[ ! -f "${inputs["ref"]/.fa/.dict}" ]] ; then
+		echo " can't find gatk reference dictionary"
 		return 1
 	fi
 }
 function check_samtools_fai() {
-       check_ref
-       if [[ ! -f "${ref/.fasta/.fai}" ]]; then
-          echo "${error}: can't find samtools fai index"
+       if [[ ! -f "${inputs["ref"]/.fasta/.fai}" ]] || [[ ! -f "${inputs["ref"]/.fa/.fai}" ]]; then
+          echo " can't find samtools fai index"
+          return 1
        fi
 }
 
@@ -877,91 +959,32 @@ function check_adapter() {
 #--- Check sample file
 function check_sample() {
 	# check meta variabe was set
-	if [[ "$meta" == NULL ]]; then
+	if [[ "${inputs["meta"]}" == NULL ]]; then
 		echo -e "\e[38;5;1mERROR\e[0m: -s,--sample_list not provided! Exiting..."; 1>&2;
 		return 1
-	elif [ -f $meta -a -s $meta ]; then
-		for i in $(awk '{print $1}' $meta); do
+	elif [ -f $${inputs["meta"]} -a -s $${inputs["meta"]} ]; then
+		for i in $(awk '{print $1}' $${inputs["meta"]}); do
 			[ ! $i == "#"* ] && continue
-			if [ ! -f ${rds_dir}$i ]; then
+			if [ ! -f ${rds_dir}/$i ]; then
 				echo -e "\e[38;5;1mERROR\e[0m: '${i}' was not found in the directory '${rds_dir}'.\nPlease specify the path with -p or --path or check that the files in the path are the same in the sample list" 1>&2;
 				return 1;
-			elif [ -f ${rds_dir}${i} -a ! -s ${rds_dir}${i} ]; then
+			elif [ -f ${rds_dir}/${i} -a ! -s ${rds_dir}/${i} ]; then
 				echo -e "\e[38;5;1mERROR\e[0m: '${i}' may be empty. Please check and correct '${rds_dir}'." 1>&2;
 				return 1;
 		   fi
 		done
-	elif [ -f $meta -a ! -s $meta ]; then
+	elif [ -f ${inputs["meta"]} -a ! -s ${inputs["meta"]} ]; then
 		echo -e "\e[38;5;1mERROR\e[0m: '$meta' seems to be empty! Please check and correct." 1>&2;
 	fi
 
-}
-
-#--- Check Fastq/SAM/BAM and make input files
-function check_fq() {
-	tmp_prefix=$1
-
-	# get all sample fastq file names from meta file
-
-    #--- Make input files from forward/reverse runs or SAM/BAM files
-	> ${tmp_prefix}fwd.txt
+	# check read files in $meta file exist
 	while IFS= read -r line; do
 		if [[ ! $line == "#"* ]]; then
 			line_array=( $line )
-    		echo "${line_array[0]}" >> ${tmp_prefix}fwd.txt
+			[[ -s ${rds_dir}/"${line_array[0]}" ]] || { echo "Error: ${line_array[0]} does not exist or is empty"; return 1; }
+			[[ -s ${rds_dir}/"${line_array[1]}" ]] || { echo "Error: ${line_array[0]} does not exist or is empty"; return 1; }
 		fi
-	done < $meta
-    if [[ ! -s "${tmp_prefix}fwd.txt" ]]; then
-       echo -e "\n\e[38;5;1mERROR\e[0m: No fastq/SAM/BAM file found in the specified location: '$dname'\nPlease specify path to Fastq/SAM/BAM files using -p or --path\n"
-       rm ${tmp_prefix}fwd.txt 1>&2;
-       return 1;
-    fi
-
-	> ${tmp_prefix}rev.txt
-	while IFS= read -r line; do
-		if [[ ! $line == "#"* ]]; then
-			line_array=( $line )
-    		echo "${line_array[1]}" >> ${tmp_prefix}rev.txt
-		fi
-	done < $meta
-
-	if [[ ! -s "${tmp_prefix}rev.txt" ]]; then
-		cp ${tmp_prefix}fwd.txt ${tmp_prefix}forward_reverse.txt
-		awk -v d="${rds_dir}/" '{print d$1}' ${tmp_prefix}forward_reverse.txt > ${tmp_prefix}fastq.input.txt
-	else
-		paste ${tmp_prefix}fwd.txt ${tmp_prefix}rev.txt | awk '{print $1,$2}' > ${tmp_prefix}forward_reverse.txt
-		awk -v d="${rds_dir}/" '{print d$1,d$2}' ${tmp_prefix}forward_reverse.txt > ${tmp_prefix}fastq.input.txt
-	fi
-    rm ${tmp_prefix}fwd.txt ${tmp_prefix}rev.txt
-
-}
-
-#  Prepare input for BQSR
-#	* check that a list of bam files
-#	* has been provided by the user
-#	* via $blist, 
-#	* or create one from the sample list
-#	* via $meta
-# 
-function check_bamlist() {
-	tmp_prefix=$1
-
-	if [[ ! $blist==NULL ]]; then
-		echo "using user's input bam list $blist"
-		cat $blist > ${tmp_prefix}bam.list 
-		return 0
-	else
-		echo "locating bam files attached to the provided sample ids"
-		samples=$(sed '/^#/d' ${meta} | awk '{print $3}')
-		for i in ${samples[@]}; do
-			for f in ${bam_dir}/$i*.bam; do
-				basename $f
-			done
-		done > ${tmp_prefix}bam.list
-	fi
-
-	[[ -s ${tmp_prefix}bam.list ]] || { echo "\n\e[38;5;1mERROR\e[0m: no bam files were found, please check and try again"; return 1; }
-
+	done < ${inputs["meta"]}
 }
 
 #--- Prepare input for BQSR
@@ -995,14 +1018,49 @@ fi
 #  3. prep functions
 #
 #	summary:
+#	+ prep_fq()
 #	+ prep_trim()
 #	+ prep_map()
+#	+ prep_bamlist()
 #
 
+#  prep_fq
+#
+#	* create temporary files used by fq()
+#
+function prep_fq() { tmp_prefix=$1
+
+	#--- Make input files from forward/reverse runs or SAM/BAM files
+	> ${tmp_prefix}fwd.txt
+	while IFS= read -r line; do
+		if [[ ! $line == "#"* ]]; then
+			line_array=( $line )
+			echo "${line_array[0]}" >> ${tmp_prefix}fwd.txt
+		fi
+	done < ${inputs["meta"]}
+
+	> ${tmp_prefix}rev.txt
+	while IFS= read -r line; do
+		if [[ ! $line == "#"* ]]; then
+			line_array=( $line )
+			echo "${line_array[1]}" >> ${tmp_prefix}rev.txt
+		fi
+	done < ${inputs["meta"]}
+
+	if [[ ! -s "${tmp_prefix}rev.txt" ]]; then
+		cp ${tmp_prefix}fwd.txt ${tmp_prefix}forward_reverse.txt
+		awk -v d="${rds_dir}/" '{print d$1}' ${tmp_prefix}forward_reverse.txt > ${tmp_prefix}fastq.input.txt
+	else
+		paste ${tmp_prefix}fwd.txt ${tmp_prefix}rev.txt | awk '{print $1,$2}' > ${tmp_prefix}forward_reverse.txt
+		awk -v d="${rds_dir}/" '{print d$1,d$2}' ${tmp_prefix}forward_reverse.txt > ${tmp_prefix}fastq.input.txt
+	fi
+	rm ${tmp_prefix}fwd.txt ${tmp_prefix}rev.txt
+
+}
 
 function prep_trim() {
 	tmp_prefix=$1
-    check_fq $tmp_prefix || return 1
+    prep_fq $tmp_prefix || return 1
 
     #--- On checking for fastq files above, we checked for SAM/BAM as well. If the function picked SAM/BAM, we definitely wanna spill errors since we can't trim SAM/BAM here
     for i in $(awk '{print $1}' ${tmp_prefix}forward_reverse.txt | head -1); do
@@ -1030,3 +1088,39 @@ function prep_map() {
 	fi
 }
 
+#  prep_bamlist
+#
+#  Prepare input for BQSR, varcall
+#	* check that a list of bam files
+#	* has been provided by the user
+#	* via $blist, 
+#	* or create one from the sample list
+#	* via $meta
+# 
+function prep_bamlist() {
+	#  * if the user has specified an input bam list 
+	#  * then use this one, otherwise, create one
+	#  * using the sample IDs in the $inputs["meta"] file.
+	local \
+		tmp_prefix=$1 \
+		samples \
+		i \
+		f
+
+	if [[ ! ${inputs["blist"]}==NULL ]]; then
+		echo "using user's input bam list $blist"
+		cat ${inputs["blist"]} > ${tmp_prefix}bam.list 
+		return 0
+	else
+		echo "locating bam files attached to the provided sample ids"
+		samples=$(sed '/^#/d' ${inputs["meta"]} | awk '{print $3}')
+		for i in ${samples[@]}; do
+			for f in ${bam_dir}/$i*.bam; do
+				basename $f
+			done
+		done > ${tmp_prefix}bam.list
+	fi
+
+	[[ -s ${tmp_prefix}bam.list ]] || { echo "\n\e[38;5;1mERROR\e[0m: no bam files were found, please check and try again"; return 1; }
+
+}
