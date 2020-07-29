@@ -12,22 +12,22 @@
 source ../includes/locations.sh
 source ../includes/utilities.sh
 
-workflow() { local argv=("$@")
-	
+workflow() {
+	local argv=("$@")
+
 	declare -A inputs=( ["input_json"]=${argv[0]} )
 
 	custom_call initialize_inputs_hash "initializing input parameter values..."
 
-	custom_call pfq "checking read file quality..."
+	##custom_call fq "checking read file quality..."
 
-	custom_call ptrim "trimming read files..."
+	##custom_call trim "trimming read files..."
 
-	custom_call gmap "performing Mapping/Alignment with GATKv4 and BWA ..."
+	custom_call bmap "map reads to the reference with bwa..."
 
-	custom_call varcall "calling variants with gatk..."
+	custom_call bcfcall "calling variants with bcftools..."
 
 }
-
 
 #
 #  tasks/functions
