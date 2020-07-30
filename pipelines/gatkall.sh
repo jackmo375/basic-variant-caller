@@ -11,6 +11,9 @@
 
 source ../includes/locations.sh
 source ../includes/utilities.sh
+source ${pip_dir}/modules/checkparams.mod.sh
+source ${pip_dir}/modules/geneMapNGS.mod.sh
+
 
 workflow() { local argv=("$@")
 	
@@ -28,11 +31,6 @@ workflow() { local argv=("$@")
 
 }
 
-
-#
-#  tasks/functions
-#
-source ./geneMapNGS.tasks.sh
 
 #
 #  run workflow

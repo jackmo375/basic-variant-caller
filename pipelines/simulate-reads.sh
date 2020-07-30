@@ -10,7 +10,8 @@ source ../includes/locations.sh
 source ../includes/utilities.sh
 
 
-workflow() { argv=("$@")
+workflow() { 
+	local argv=("$@")
 
 	input_json=${argv[0]}
 	output_label=$(basename $input_json .json)

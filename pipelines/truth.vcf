@@ -1,0 +1,76 @@
+##fileformat=VCFv4.3
+##fileDate=20200630
+##source=simulate program
+##reference=/home/jack/Local/GeneMap/basic-variant-caller/data/references/c_lambda-virus.fa
+##FILTER=<ID=none,Description="No filters applied">
+##contig=<ID=gi|9626243|ref|NC_001416.1|,length=48491,assembly=B36,md5=f126cdf8a6e0c7f379d618ff66beb2da,species="Enterobacteria phage lambda",taxonomy=x>
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO
+gi|9626243|ref|NC_001416.1|	659	.	A	T	inf	none	.
+gi|9626243|ref|NC_001416.1|	785	.	G	C	inf	none	.
+gi|9626243|ref|NC_001416.1|	850	.	A	G	inf	none	.
+gi|9626243|ref|NC_001416.1|	943	.	C	G	inf	none	.
+gi|9626243|ref|NC_001416.1|	1421	.	T	A	inf	none	.
+gi|9626243|ref|NC_001416.1|	1913	.	C	A	inf	none	.
+gi|9626243|ref|NC_001416.1|	3718	.	T	A	inf	none	.
+gi|9626243|ref|NC_001416.1|	4203	.	C	G	inf	none	.
+gi|9626243|ref|NC_001416.1|	5960	.	C	T	inf	none	.
+gi|9626243|ref|NC_001416.1|	6041	.	A	T	inf	none	.
+gi|9626243|ref|NC_001416.1|	6089	.	T	A	inf	none	.
+gi|9626243|ref|NC_001416.1|	6226	.	A	G	inf	none	.
+gi|9626243|ref|NC_001416.1|	6487	.	G	C	inf	none	.
+gi|9626243|ref|NC_001416.1|	6837	.	C	G	inf	none	.
+gi|9626243|ref|NC_001416.1|	9819	.	C	G	inf	none	.
+gi|9626243|ref|NC_001416.1|	10157	.	G	A	inf	none	.
+gi|9626243|ref|NC_001416.1|	11036	.	G	A	inf	none	.
+gi|9626243|ref|NC_001416.1|	13253	.	C	G	inf	none	.
+gi|9626243|ref|NC_001416.1|	13361	.	A	T	inf	none	.
+gi|9626243|ref|NC_001416.1|	13389	.	G	C	inf	none	.
+gi|9626243|ref|NC_001416.1|	14380	.	G	A	inf	none	.
+gi|9626243|ref|NC_001416.1|	17269	.	G	C	inf	none	.
+gi|9626243|ref|NC_001416.1|	18343	.	T	C	inf	none	.
+gi|9626243|ref|NC_001416.1|	20611	.	C	T	inf	none	.
+gi|9626243|ref|NC_001416.1|	22754	.	C	T	inf	none	.
+gi|9626243|ref|NC_001416.1|	23618	.	C	G	inf	none	.
+gi|9626243|ref|NC_001416.1|	23674	.	T	G	inf	none	.
+gi|9626243|ref|NC_001416.1|	29436	.	A	C	inf	none	.
+gi|9626243|ref|NC_001416.1|	30204	.	T	C	inf	none	.
+gi|9626243|ref|NC_001416.1|	31648	.	A	T	inf	none	.
+gi|9626243|ref|NC_001416.1|	32549	.	A	C	inf	none	.
+gi|9626243|ref|NC_001416.1|	33360	.	C	A	inf	none	.
+gi|9626243|ref|NC_001416.1|	33770	.	A	C	inf	none	.
+gi|9626243|ref|NC_001416.1|	34578	.	G	C	inf	none	.
+gi|9626243|ref|NC_001416.1|	35356	.	A	C	inf	none	.
+gi|9626243|ref|NC_001416.1|	36915	.	T	G	inf	none	.
+gi|9626243|ref|NC_001416.1|	37059	.	T	A	inf	none	.
+gi|9626243|ref|NC_001416.1|	37141	.	C	A	inf	none	.
+gi|9626243|ref|NC_001416.1|	38832	.	T	G	inf	none	.
+gi|9626243|ref|NC_001416.1|	41586	.	C	T	inf	none	.
+gi|9626243|ref|NC_001416.1|	42515	.	A	G	inf	none	.
+gi|9626243|ref|NC_001416.1|	43467	.	T	C	inf	none	.
+gi|9626243|ref|NC_001416.1|	44279	.	G	C	inf	none	.
+gi|9626243|ref|NC_001416.1|	44976	.	G	T	inf	none	.
+gi|9626243|ref|NC_001416.1|	45423	.	C	A	inf	none	.
+gi|9626243|ref|NC_001416.1|	45691	.	T	A	inf	none	.
+gi|9626243|ref|NC_001416.1|	46319	.	A	T	inf	none	.
+gi|9626243|ref|NC_001416.1|	46904	.	C	A	inf	none	.
+gi|9626243|ref|NC_001416.1|	47813	.	A	T	inf	none	.
+gi|9626243|ref|NC_001416.1|	760	.	C	CTC	inf	none	.
+gi|9626243|ref|NC_001416.1|	2002	.	GCCAC	G	inf	none	.
+gi|9626243|ref|NC_001416.1|	2355	.	ATATT	A	inf	none	.
+gi|9626243|ref|NC_001416.1|	3142	.	CCCGTGCCTTTTCC	C	inf	none	.
+gi|9626243|ref|NC_001416.1|	4194	.	A	AG	inf	none	.
+gi|9626243|ref|NC_001416.1|	8461	.	TTTA	T	inf	none	.
+gi|9626243|ref|NC_001416.1|	9906	.	G	GTTAG	inf	none	.
+gi|9626243|ref|NC_001416.1|	21985	.	AGTGAACAA	A	inf	none	.
+gi|9626243|ref|NC_001416.1|	26018	.	TC	T	inf	none	.
+gi|9626243|ref|NC_001416.1|	27993	.	GAT	G	inf	none	.
+gi|9626243|ref|NC_001416.1|	28039	.	AA	A	inf	none	.
+gi|9626243|ref|NC_001416.1|	28515	.	TTTG	T	inf	none	.
+gi|9626243|ref|NC_001416.1|	29257	.	C	CCA	inf	none	.
+gi|9626243|ref|NC_001416.1|	30024	.	C	CT	inf	none	.
+gi|9626243|ref|NC_001416.1|	32138	.	G	GCAATT	inf	none	.
+gi|9626243|ref|NC_001416.1|	34850	.	A	AG	inf	none	.
+gi|9626243|ref|NC_001416.1|	37856	.	T	TACATACAGCT	inf	none	.
+gi|9626243|ref|NC_001416.1|	45903	.	T	TCCTTGT	inf	none	.
+gi|9626243|ref|NC_001416.1|	46530	.	GTT	G	inf	none	.
+gi|9626243|ref|NC_001416.1|	46897	.	C	CA	inf	none	.

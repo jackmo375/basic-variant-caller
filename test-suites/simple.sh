@@ -8,6 +8,7 @@
 #	for the truth and estimated vcf files.*
 #
 ###############################################
+#!/bin/bash
 
 source ../configs/parameters.cfg
 

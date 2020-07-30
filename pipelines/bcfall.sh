@@ -1,5 +1,5 @@
 #
-#  gatkall
+#  bcfall
 #	* NGS variant calling pipeline
 #	* using the gatk 
 #

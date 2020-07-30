@@ -51,6 +51,7 @@ initialize_inputs_hash() {
 	# 1. set default parameter values
 	printf 'setting default parameter values...'
 	inputs["meta"]=NULL
+	inputs["cohort_id"]=NULL
 	inputs["threads"]=1
 	inputs["trim_minlen"]=36
 	inputs["trim_adap"]=NULL
@@ -65,7 +66,13 @@ initialize_inputs_hash() {
 
 	# 2. update parameters with arguments from the input json file
 	printf 'updating with arguments from input json file...'
-	value_from_json ${inputs["input_json"]} '.meta_base'   inputs["meta_base"] && inputs["meta"]=${rds_dir}/${inputs["meta_base"]}
+	value_from_json ${inputs["input_json"]} '.cohort_id'   inputs["cohort_id"]
+	value_from_json ${inputs["input_json"]} '.meta_base'   inputs["meta_base"]
+	if [[ ! "${inputs["cohort_id"]}" == NULL ]]; then
+		inputs["meta"]=${rds_dir}/${inputs["cohort_id"]}.txt
+	elif [[ ! "${inputs["meta_base"]}" == NULL ]]; then
+		inputs["meta"]=${rds_dir}/${inputs["meta_base"]}
+	fi
 	value_from_json ${inputs["input_json"]} '.threads'     inputs["threads"]
 	value_from_json ${inputs["input_json"]} '.trim_minlen' inputs["trim_minlen"]
 	value_from_json ${inputs["input_json"]} '.trim_leadx'  inputs["trim_leadx"]
@@ -126,10 +133,10 @@ initialize_inputs_hash() {
 #		+ forward_reverse.txt in ${tmp_dir} 
 #
 function fq() {
-
-	local tmp_prefix=${tmp_dir}/$(random_id)_
-	local id=${tmp_prefix}fastq.input.txt
-	local odr="${fqc_dir}/"
+	local \
+		tmp_prefix=${tmp_dir}/$(random_id)_ \
+		id=${tmp_prefix}fastq.input.txt \
+		odr="${fqc_dir}/"
 
 	prep_fq $tmp_prefix || return 1
 
@@ -144,10 +151,11 @@ function fq() {
 }
 
 function pfq() {
-	local tmp_prefix=${tmp_dir}/$(random_id)_
-	local id=${tmp_prefix}fastq.input.txt
-	local odr="${fqc_dir}/"
-	local n=$((50/${inputs["threads"]}))
+	local \
+		tmp_prefix=${tmp_dir}/$(random_id)_ \
+		id=${tmp_prefix}fastq.input.txt \
+		odr="${fqc_dir}/" \
+		n=$((50/${inputs["threads"]}))
 
 	prep_fq $tmp_prefix || return 1
 
@@ -173,11 +181,10 @@ function pfq() {
 #		+ trimmed (and zipped) read (fastq) files
 #
 function trim() {
+	local tmp_prefix=${tmp_dir}/$(random_id)_
 
-	tmp_prefix=${tmp_dir}/$(random_id)_
 	prep_trim $tmp_prefix || return 1
 
-	id=${tmp_prefix}trim.input.txt
 	while read -r line; do
 		echo -e "running Trimmomatic"
 		java -jar $trimmomatic PE \
@@ -189,7 +196,7 @@ function trim() {
               MINLEN:${inputs["trim_minlen"]} \
               -threads ${inputs["threads"]} \
               || { echo 'trimmomatic failed'; return 1; }
-	done < $id
+	done < ${tmp_prefix}trim.input.txt
 	
 	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
 }
@@ -747,7 +754,7 @@ _combine_sample_gvcfs() {
 		--arguments_file $gvcf_list \
 		$(if [[ ${inputs["dbsnp"]} != NULL ]]; then echo --dbsnp ${inputs["dbsnp"]}; fi) \
 		$(if [[ ${inputs["ped"]} != NULL ]]; then echo -ped {inputs["ped"]}; fi) \
-		-O ${vcf_dir}/combined.g.vcf \
+		-O ${vcf_dir}/${inputs["cohort_id"]}.combined.g.vcf \
 		|| { echo 'failed to combine gvcf files'; status=1; }
 
 	return $status
@@ -759,10 +766,10 @@ _genotype_combined_gvcf() {
 
 	$gatk GenotypeGVCFs \
 		-R ${inputs["ref"]} \
-		-V ${vcf_dir}/combined.g.vcf \
+		-V ${vcf_dir}/${inputs["cohort_id"]}.combined.g.vcf \
 		$(if [[ ${inputs["dbsnp"]} != NULL ]]; then echo --dbsnp ${inputs["dbsnp"]}; fi) \
 		$(if [[ ${inputs["ped"]} != NULL ]]; then echo -ped {inputs["ped"]}; fi) \
-		-O ${vcf_dir}/genotyped.g.vcf \
+		-O ${vcf_dir}/${inputs["cohort_id"]}.genotyped.g.vcf \
 		|| { echo 'failed to genotype cohort gvcf file'; status=1; }
 
 	return $status
@@ -910,10 +917,6 @@ function bcfcall() {
 #  2. check functions
 #
 #	summary:
-#	+ check_ref()
-#	+ check_bwa_idx()
-#	+ check_gatk_dict()
-#	+ check_samtools_fai()
 #	+ check_sites()
 #	+ check_adapter()
 #	+ check_sample()
@@ -923,33 +926,7 @@ function bcfcall() {
 #
 
 #--- Check References and their indixes
-function check_ref() {
-       if [[ "${inputs["ref"]}" == NULL ]]; then
-          echo -e " -r,--ref not provided! Exiting..."; 1>&2;
-          return 1
-       elif [ ! -f "${inputs["ref"]}" -o ! -s "${inputs["ref"]}" ]; then
-          echo -e " Problem with reference file. Please check that it exists and is not empty..."; 1>&2;
-          return 1
-       fi
-}
-function check_bwa_idx() {
-       if [[ ! -f "${inputs["ref"]}.bwt" ]]; then
-            echo " can't find the bwa index for ${inputs["ref"]}"
-			return 1
-       fi
-}
-function check_gatk_dict() {
-	if [[ ! -f "${inputs["ref"]/.fasta/.dict}" ]] || [[ ! -f "${inputs["ref"]/.fa/.dict}" ]] ; then
-		echo " can't find gatk reference dictionary"
-		return 1
-	fi
-}
-function check_samtools_fai() {
-       if [[ ! -f "${inputs["ref"]/.fasta/.fai}" ]] || [[ ! -f "${inputs["ref"]/.fa/.fai}" ]]; then
-          echo " can't find samtools fai index"
-          return 1
-       fi
-}
+
 
 #--- Check additional [optional] references (Known sites) for IndelRealignment, BQSR, and VQSR
 function check_sites() {
@@ -986,8 +963,8 @@ function check_sample() {
 	if [[ "${inputs["meta"]}" == NULL ]]; then
 		echo -e "\e[38;5;1mERROR\e[0m: -s,--sample_list not provided! Exiting..."; 1>&2;
 		return 1
-	elif [ -f $${inputs["meta"]} -a -s $${inputs["meta"]} ]; then
-		for i in $(awk '{print $1}' $${inputs["meta"]}); do
+	elif [ -f ${inputs["meta"]} -a -s ${inputs["meta"]} ]; then
+		for i in $(awk '{print $1}' ${inputs["meta"]}); do
 			[ ! $i == "#"* ] && continue
 			if [ ! -f ${rds_dir}/$i ]; then
 				echo -e "\e[38;5;1mERROR\e[0m: '${i}' was not found in the directory '${rds_dir}'.\nPlease specify the path with -p or --path or check that the files in the path are the same in the sample list" 1>&2;
@@ -1053,7 +1030,10 @@ fi
 #
 #	* create temporary files used by fq()
 #
-function prep_fq() { tmp_prefix=$1
+function prep_fq() {
+	local \
+		tmp_prefix=$1 \
+		line
 
 	#--- Make input files from forward/reverse runs or SAM/BAM files
 	> ${tmp_prefix}fwd.txt
@@ -1084,7 +1064,9 @@ function prep_fq() { tmp_prefix=$1
 }
 
 function prep_trim() {
-	tmp_prefix=$1
+	local \
+		tmp_prefix=$1
+    
     prep_fq $tmp_prefix || return 1
 
     #--- On checking for fastq files above, we checked for SAM/BAM as well. If the function picked SAM/BAM, we definitely wanna spill errors since we can't trim SAM/BAM here
