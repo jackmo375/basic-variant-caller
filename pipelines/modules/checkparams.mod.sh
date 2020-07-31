@@ -25,7 +25,7 @@ check_id() {
         status=0
 
     # check the id is not empty or null
-    [[ -z $id ]] && { echo 'ERROR: input id is empty, please choose another'; status=1; }
+    [[ -z $id ]] && { echo 'ERROR: input $id_type id is empty, please choose another'; status=1; }
 
     # check the id type has the relevant identifier: c_..., s_...
     if [[ $id_type == 'cohort' ]]; then

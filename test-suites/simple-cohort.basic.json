@@ -1,0 +1,7 @@
+{
+  "cohort_id": "c_1",
+  "simulate_id": "simulate-cohort",
+  "simulate_inputs_id": "basic",
+  "pipeline_id": "gatkall",
+  "pipeline_inputs_id": "basic"
+}

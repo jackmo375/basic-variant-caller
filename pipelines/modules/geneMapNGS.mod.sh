@@ -98,6 +98,9 @@ initialize_inputs_hash() {
 	## still need to write checks for the other input parameters...
 	[[ $status == 0 ]] && echo 'done'
 
+	# 4. set up output logging 
+	set_up_log_directory || { echo 'seting up log directory failed'; status=1; }
+
 	return $status
 }
 
@@ -119,7 +122,7 @@ initialize_inputs_hash() {
 #	+ bcfcall()
 #	
 
-#  fq(), pfq()
+#  fq()
 #
 #	*calls FastQC on read files in series, parallel*
 #
@@ -135,35 +138,25 @@ initialize_inputs_hash() {
 function fq() {
 	local \
 		tmp_prefix=${tmp_dir}/$(random_id)_ \
-		id=${tmp_prefix}fastq.input.txt \
-		odr="${fqc_dir}/"
-
-	prep_fq $tmp_prefix || return 1
-
-    while read -r line; do
-        echo -e "running FastQC"
-        $fastqc -t ${inputs["threads"]} $line -o $odr
-    done < $id
-
-	# remove all temporary files
-	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
-
-}
-
-function pfq() {
-	local \
-		tmp_prefix=${tmp_dir}/$(random_id)_ \
-		id=${tmp_prefix}fastq.input.txt \
-		odr="${fqc_dir}/" \
-		n=$((50/${inputs["threads"]}))
+		option_string \
+		n=$((${inputs["threads"]}))
 
 	prep_fq $tmp_prefix || return 1
 
 	echo -e "running FastQC"
 	echo -e "Your jobs will be split across $n parallel threads"
-	cat $id | \
-		parallel --col-sep ' ' echo -e "-t ${inputs["threads"]} {1} $(if [ -n {2} ]; then echo {2}; fi) -o $odr" | \
-		xargs -I input -P$n sh -c "$fastqc input"
+
+	option_string="\
+		-t ${inputs["threads"]} \
+		{1} \
+		$(if [ -n {2} ]; then echo {2}; fi) \
+		-o ${fqc_dir}/"
+
+	run_in_parallel \
+		$fastqc \
+		${tmp_prefix}fastq.input.txt \
+		"${option_string}" \
+		|| return 1
 
 	# remove all temporary files
 	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
@@ -181,7 +174,8 @@ function pfq() {
 #		+ trimmed (and zipped) read (fastq) files
 #
 function trim() {
-	local tmp_prefix=${tmp_dir}/$(random_id)_
+	local \
+		tmp_prefix=${tmp_dir}/$(random_id)_
 
 	prep_trim $tmp_prefix || return 1
 
@@ -202,18 +196,30 @@ function trim() {
 }
 
 function ptrim() {
+	local \
+		tmp_prefix=${tmp_dir}/$(random_id)_ \
+		n=$((${inputs["threads"]})) \
+		option_string
 
-	tmp_prefix=${tmp_dir}/$(random_id)_
 	prep_trim $tmp_prefix || return 1
 
-	id=${tmp_prefix}trim.input.txt
-	n=$((50/${inputs["threads"]}))
 	echo -e "running Trimmomatic"
 	echo -e "Your jobs will be split across $n parallel threads"
-	cat $id | \
-		parallel --col-sep ' ' echo "PE -phred33 {} $(if [[ ${inputs["trim_adap"]} != NULL ]]; then check_adapter; fi) LEADING:${inputs["trim_leadx"]} TRAILING:${inputs["trim_trailx"]} SLIDINGWINDOW:4:15 MINLEN:${inputs["trim_minlen"]} -threads ${inputs["threads"]}" | \
-		xargs -I input -P$n sh -c "java -jar $trimmomatic input" \
-		|| { echo 'trimmomatic failed'; return 1; }
+
+	option_string="PE \
+		-phred33 {} \
+		$(if [[ ${inputs["trim_adap"]} != NULL ]]; then check_adapter; fi) \
+		LEADING:${inputs["trim_leadx"]} \
+		TRAILING:${inputs["trim_trailx"]} \
+		SLIDINGWINDOW:4:15 \
+		MINLEN:${inputs["trim_minlen"]} \
+		-threads ${inputs["threads"]}"
+
+	run_in_parallel \
+		"java -jar ${trimmomatic} input" \
+		"${tmp_prefix}trim.input.txt" \
+		"${option_string}" \
+		|| return 1		
 	
 	# remove temporary files
 	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
@@ -885,28 +891,28 @@ function bcfcall() {
 		--thread ${inputs["threads"]} \
 		-f ${inputs["ref"]} \
 		-Oz \
-		-o ${vcf_dir}/piledup.vcf.gz \
+		-o ${vcf_dir}/${inputs["cohort_id"]}.piledup.vcf.gz \
 		-b ${tmp_prefix}bam.inputs \
 		|| { echo 'bcftools mpileup failed'; return 1; }
 
-	$bcftools index -f -t ${vcf_dir}/piledup.vcf.gz \
+	$bcftools index -f -t ${vcf_dir}/${inputs["cohort_id"]}.piledup.vcf.gz \
 		|| { echo 'failed to index bcftools piledup gvcf file'; return 1; }
 
 	$bcftools call \
 		-mv \
 		--threads ${inputs["threads"]} \
 		-Oz \
-		-o ${vcf_dir}/called.vcf.gz \
-		${vcf_dir}/piledup.vcf.gz \
+		-o ${vcf_dir}/${inputs["cohort_id"]}.genotyped.g.vcf.gz \
+		${vcf_dir}/${inputs["cohort_id"]}.piledup.vcf.gz \
 		|| { echo 'failed to call variants'; return 1; }
 
-	$bcftools index -f -t ${vcf_dir}/called.vcf.gz \
+	$bcftools index -f -t ${vcf_dir}/${inputs["cohort_id"]}.genotyped.g.vcf.gz \
 		|| { echo 'failed to index bcftools called gvcf file'; return 1; }
 
 	# unzip the final gvcf file to inspect
 	$bcftools view \
-		-o ${vcf_dir}/called.vcf \
-		${vcf_dir}/called.vcf.gz \
+		-o ${vcf_dir}/${inputs["cohort_id"]}.genotyped.g.vcf \
+		${vcf_dir}/${inputs["cohort_id"]}.genotyped.vcf.g.gz \
 
 	# remove all temporary files
 	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
@@ -959,6 +965,12 @@ function check_adapter() {
 
 #--- Check sample file
 function check_sample() {
+	local \
+		line \
+		line_array \
+		sample_id \
+		sample_log_file
+
 	# check meta variabe was set
 	if [[ "${inputs["meta"]}" == NULL ]]; then
 		echo -e "\e[38;5;1mERROR\e[0m: -s,--sample_list not provided! Exiting..."; 1>&2;
@@ -978,12 +990,17 @@ function check_sample() {
 		echo -e "\e[38;5;1mERROR\e[0m: '$meta' seems to be empty! Please check and correct." 1>&2;
 	fi
 
-	# check read files in $meta file exist
+	# check read files in $meta file exist, and create log files if they do not exist
 	while IFS= read -r line; do
 		if [[ ! $line == "#"* ]]; then
 			line_array=( $line )
+			sample_id=${line_array[2]}
 			[[ -s ${rds_dir}/"${line_array[0]}" ]] || { echo "Error: ${line_array[0]} does not exist or is empty"; return 1; }
 			[[ -s ${rds_dir}/"${line_array[1]}" ]] || { echo "Error: ${line_array[0]} does not exist or is empty"; return 1; }
+
+			# create a new log file for each sample if they don't already exist:
+			sample_log_file=${inputs["log_prefix"]}${inputs["cohort_id"]}.s_${sample_id}.log
+			[[ -s $sample_log_file ]] || { > $sample_log_file && echo "output logs for sample $s will be saved in $sample_log_file"; }
 		fi
 	done < ${inputs["meta"]}
 }

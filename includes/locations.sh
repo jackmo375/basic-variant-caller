@@ -12,6 +12,7 @@ rds_dir=${dat_dir}/reads
 ref_dir=${dat_dir}/references
 fqc_dir=${dat_dir}/fastqc
 tmp_dir=${dat_dir}/temp
+log_dir=${pro_dir}/logs
 
 pip_dir=${pro_dir}/pipelines
 

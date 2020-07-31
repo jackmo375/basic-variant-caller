@@ -18,6 +18,22 @@ custom_call() {
 		&& { printf "${green}...done."${nc}; echo; }
 }
 
+custom_call_2() {
+	# for *low level functions*
+	# call tasks above with messages
+	# and return 1 on errors
+	local \
+		msg=$1 \
+		log_file=$2 \
+		routine=$3
+	shift; shift; shift
+ 
+ 	printf "$msg"
+	$routine "$@" &>>$log_file \
+		|| { printf "...failed!"; echo; return 1; } \
+		&& { printf "...done."; echo; return 0; }
+}
+
 value_from_json() {
 	local file=$1		# path of input json file
 	local key=$2		# data field/key of {key, value} in the file
@@ -42,5 +58,28 @@ check_int() {
 	re=^[0-9]+$
 	if ! [[ $1 =~ ^[0-9]+$ ]] ; then
    		echo "error: $2 is not a positive integer" >&2; return 1
+	fi
+}
+
+run_in_parallel() {
+	local \
+		routine=$1 \
+		parameter_file=$2 \
+		option_string=$3 \
+		status=0
+
+	sed '/^#/d' ${parameter_file} | \
+		parallel \
+			--col-sep '\t' \
+			echo "${option_string}" | \
+		xargs -I input -P$n sh -c "$routine input" \
+		|| return 1
+
+}
+
+set_up_log_directory() {
+	if [[ -z ${inputs["log_prefix"]} ]]; then
+		inputs["log_prefix"]=${log_dir}/$(random_id)/ && mkdir ${inputs["log_prefix"]}
+		echo "output logs will be saved to ${inputs["log_prefix"]}"
 	fi
 }

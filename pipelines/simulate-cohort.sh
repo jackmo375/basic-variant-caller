@@ -13,9 +13,10 @@ source ../includes/utilities.sh
 source ${pip_dir}/modules/checkparams.mod.sh
 
 workflow() { 
-	local argv=("$@")
+	local \
+		argv=("$@")
 
-	declare -A inputs=( ["input_json"]=${argv[0]} )
+	declare -A inputs=( ["input_json"]=${argv[0]} ["log_prefix"]=${argv[1]} )
 
 	custom_call check_input_json "checking input json file was provided..."
 
@@ -55,6 +56,9 @@ initialize_inputs_hash() {
 	check_int ${inputs["n_samples"]} n_samples || status=1
 	[[ $status == 0 ]] && echo 'done'
 
+	# 4. set up logging information
+	set_up_log_directory || { echo 'seting up log directory failed'; status=1; }
+
 	return $status
 }
 
@@ -84,22 +88,37 @@ _generate_reads() {
 		sample_ids \
 		s \
 		prefix \
+		sample_log_file \
+		input_file \
+		input_string \
+		n=$((${inputs["threads"]})) \
 		status=0
 
-	sample_ids=$(seq 1 1 ${inputs["n_samples"]})
 	echo "# sample file for cohort: ${inputs["cohort_id"]}" > ${rds_dir}/${inputs["cohort_id"]}.txt
-	for s in ${sample_ids[@]}; do
-		prefix="${inputs["cohort_id"]}.s_$s.reads"
-		$simulate GenerateReads \
-			--input_ref ${tmp_prefix}${inputs["cohort_id"]}.fa \
-			--reads_prefix ${rds_dir}/$prefix \
-			--input_json ${inputs["input_json"]} \
-			|| { echo "ERROR: generating reads failed for sample id s_$s"; status=1; }
-		echo -e "${prefix}_1.fq\t${prefix}_2.fq\ts_$s\tILLUMINA" >> ${rds_dir}/${inputs["cohort_id"]}.txt
+	for s in $(seq 1 1 ${inputs["n_samples"]}); do
+		prefix="${inputs["cohort_id"]}.s_$s"
+
+		# create a new log file for each sample if they don't already exist:
+		sample_log_file=${inputs["log_prefix"]}${prefix}.log
+		[[ -s $sample_log_file ]] || { > $sample_log_file && echo "output logs for sample $s will be saved in $sample_log_file"; }
+
+		echo -e "${prefix}.reads_1.fq\t${prefix}.reads_2.fq\ts_$s\tILLUMINA" >> ${rds_dir}/${inputs["cohort_id"]}.txt
 	done
+
+	option_string="GenerateReads \
+		--input_ref ${tmp_prefix}${inputs["cohort_id"]}.fa \
+		--reads_prefix "${rds_dir}/"${inputs["cohort_id"]}.{3}.reads \
+		--input_json ${inputs["input_json"]}"
+
+	run_in_parallel \
+		$simulate \
+		${rds_dir}/${inputs["cohort_id"]}.txt \
+		"${option_string}" \
+		|| return 1
 
 	return $status
 }
+
 
 #
 #  run workflow

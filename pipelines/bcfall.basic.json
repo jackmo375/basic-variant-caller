@@ -1,5 +1,5 @@
 {
-  "meta_base": "lambda-virus.txt",
+  "cohort_id": "c_1",
   "ref_base": "lambda-virus.fa",
   "threads": 8,
   "trim_minlen": 40
