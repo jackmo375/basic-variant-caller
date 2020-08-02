@@ -23,10 +23,9 @@ workflow() {
 
 	custom_call initialize_inputs_hash "initializing input parameter values..."
 
-	##custom_call fq "checking read file quality..."
+	custom_call fq "checking read file quality..."
 
-	custom_call ptrim "trimming read files..."
-	exit 0
+	custom_call trim "trimming read files..."
 
 	custom_call gmap "performing Mapping/Alignment with GATKv4 and BWA ..."
 

@@ -175,28 +175,6 @@ function fq() {
 #
 function trim() {
 	local \
-		tmp_prefix=${tmp_dir}/$(random_id)_
-
-	prep_trim $tmp_prefix || return 1
-
-	while read -r line; do
-		echo -e "running Trimmomatic"
-		java -jar $trimmomatic PE \
-              -phred33 $line \
-              $(if [[ ${inputs["trim_adap"]} != NULL ]]; then check_adapter; fi) \
-              LEADING:${inputs["trim_leadx"]} \
-              TRAILING:${inputs["trim_trailx"]} \
-              SLIDINGWINDOW:4:15 \
-              MINLEN:${inputs["trim_minlen"]} \
-              -threads ${inputs["threads"]} \
-              || { echo 'trimmomatic failed'; return 1; }
-	done < ${tmp_prefix}trim.input.txt
-	
-	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
-}
-
-function ptrim() {
-	local \
 		tmp_prefix=${tmp_dir}/$(random_id)_ \
 		n=$((${inputs["threads"]})) \
 		option_string
@@ -216,7 +194,7 @@ function ptrim() {
 		-threads ${inputs["threads"]}"
 
 	run_in_parallel \
-		"java -jar ${trimmomatic} input" \
+		"java -jar ${trimmomatic}" \
 		"${tmp_prefix}trim.input.txt" \
 		"${option_string}" \
 		|| return 1		
@@ -249,7 +227,7 @@ function ptrim() {
 #
 function bmap() {
 
-	echo -e "running BWA-BCFTOOLS Alignment/Mapping: Serial\n"
+	echo -e "running BWA-BCFTOOLS Alignment/Mapping\n"
 
 	_aligning_reads_to_reference || return 1
 
@@ -257,64 +235,14 @@ function bmap() {
 
 	_sorting_bam_files || return 1
 
+	_add_read_group_info || return 1
+
 	_mark_duplicates || return 1
 
 	_validate_bam_files || return 1
 }
 
-function pbmap() {
-
-	tmp_prefix=${tmp_dir}/$(random_id)_
-	check_sample || return 1
-	check_ref || return 1
-	prep_map $tmp_prefix || return 1
-
-	id=${tmp_prefix}align.input.txt
-
-	# create file names
-	awk '{print $4,"-O BAM -o",$4}' ${tmp_prefix}align.input.txt | \
-	   sed 's/\.sam/\.bam/2' > ${tmp_prefix}sam2bam.input.txt
-	awk '{print $5,$5}' ${tmp_prefix}sam2bam.input.txt | \
-	   sed 's/\.bam/\.mapped.bam/1' > ${tmp_prefix}sortbam.input.txt
-	n=$((50/$t))
-	echo -e "running BWA-BCFTOOLS Alignment/Mapping: parallel\n"
-
-	# align each sample's set of reads to the reference sequence
-	cat ${tmp_prefix}align.input.txt | \
-	   parallel --col-sep ' ' echo "mem -t $t $ref {}" | \
-	   xargs -I input -P$n sh -c "$bwa input"
-
-	# compress each sample's set of aligned reads to bam format
-	cat ${tmp_prefix}sam2bam.input.txt | \
-	   parallel --col-sep ' ' echo "view -h {}" | \
-	   xargs -I input -P$n sh -c "$samtools input"
-
-	# sort each sample's set of aligned reads 
-	cat ${tmp_prefix}sortbam.input.txt | \
-	   parallel --col-sep ' ' echo "sort -O BAM --reference $ref -@ $t -o {}" | \
-	   xargs -I input -P$n sh -c "$samtools input"
-
-	# then remove all unsorted bam files
-	for sam in $(awk '{print $4}' ${tmp_prefix}align.input.txt); do
-	   rm ${sam};
-	done
-	for bam in $(awk '{print $2}' ${tmp_prefix}sortbam.input.txt); do
-	   rm ${bam};
-	done
-
-	# not sure...
-	for i in out.vcf.gz aligned/*.sam; do
-	   if [[ -e "${i}" ]]; then
-		  rm $i;
-	   fi;
-	done
-
-	# remove all temporary files from this call
-	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
-
-}
-
-#  gmap(), pgmap()
+#  gmap()
 #
 #	* GATKv4 BWA Mapping/Alignment
 #	* its odd: only the parallel version marks duplicates
@@ -354,110 +282,134 @@ function gmap() {
 
 _converting_fastq_to_sam() {
 	local \
-		sample_id \
-		line \
+		option_string \
+		n=$((${inputs["threads"]})) \
 		status=0
 
-	while read -r line; do
-		[[ "$line" == "#"* ]] && continue
-		sample_id=$(echo $line | awk '{print $3}')
+	option_string="FastqToSam \
+		-F1 ${rds_dir}/{1} \
+		-F2 ${rds_dir}/{2} \
+		-SM {3} \
+		-PL {4} \
+		-RG {3} \
+		-O ${bam_dir}/{3}.unmapped.bam"
 
-		$gatk FastqToSam \
-			-F1 ${rds_dir}/$(echo $line | awk '{print $1}') \
-			-F2 ${rds_dir}/$(echo $line | awk '{print $2}') \
-			-SM $sample_id \
-			-PL $(echo $line | awk '{print $4}') \
-			-RG $sample_id \
-			-O ${bam_dir}/${sample_id}.unmapped.bam \
-			|| { echo 'FastqToSam step failed'; status=1; }
-
-	done < ${inputs["meta"]}
+	run_in_parallel \
+		"$gatk" \
+		"${inputs["meta"]}" \
+		"${option_string}" \
+		|| { echo 'FastqToSam step failed'; status=1; }
 
 	return $status
 }
 
 _aligning_reads_to_reference() {
 	local \
-		sample_id \
-		line \
+		option_string \
+		n=$((${inputs["threads"]})) \
 		status=0
 
-	while read -r line; do
-		[[ "$line" == "#"* ]] && continue
-		sample_id=$(echo $line | awk '{print $3}')
+	option_string="mem \
+		-t ${inputs['threads']} \
+		${inputs['ref']} ${rds_dir}/{1} ${rds_dir}/{2} \
+		-o ${sam_dir}/{3}.sam"
 
-		$bwa mem \
-			-R "@RG\tID:${sample_id}\tSM:${sample_id}\tPL:ILLUMINA" \
-			-t ${inputs["threads"]} \
-			${inputs["ref"]} $(echo $line | awk -v d="${rds_dir}/" '{print d$1,d$2}') \
-			-o ${sam_dir}/${sample_id}.sam \
-			|| { echo 'bwa mem step failed'; status=1; }
-	done < ${inputs["meta"]}
+	run_in_parallel \
+		"$bwa" \
+		"${inputs['meta']}" \
+		"${option_string}" \
+		|| { echo 'bwa mem step failed'; status=1; }
 
 	return $status
 }
 
 _converting_sam_to_bam() {
 	local \
-		sample_id \
-		line \
+		option_string \
+		n=$((${inputs["threads"]})) \
 		status=0
 
-	while read -r line; do
-		[[ "$line" == "#"* ]] && continue
-		sample_id=$(echo $line | awk '{print $3}')
+	option_string="view \
+		-h ${sam_dir}/{3}.sam \
+		-O BAM \
+		-o ${bam_dir}/{3}.bam"
 
-		$samtools view \
-			-h ${sam_dir}/${sample_id}.sam \
-			-O BAM \
-			-o ${bam_dir}/${sample_id}.bam \
-			|| { echo 'sam to bam step failed'; status=1; }
-	done < ${inputs["meta"]}
+	run_in_parallel \
+		"$samtools" \
+		"${inputs["meta"]}" \
+		"${option_string}" \
+		|| { echo 'sam to bam step failed'; status=1; }
 
 	return $status
 }
 
 _sorting_bam_files() {
 	local \
-		sample_id \
-		line \
+		option_string \
+		n=$((${inputs["threads"]})) \
 		status=0
 
-	while read -r line; do
-		[[ "$line" == "#"* ]] && continue
-		sample_id=$(echo $line | awk '{print $3}')
+	option_string="sort \
+		-O BAM \
+		--reference ${inputs["ref"]} \
+		-@ ${inputs["threads"]} \
+		-o ${bam_dir}/{3}.sorted.bam \
+		${bam_dir}/{3}.bam"
 
-		$samtools sort \
-			-O BAM \
-			--reference ${inputs["ref"]} \
-			-@ ${inputs["threads"]} \
-			-o ${bam_dir}/${sample_id}.sorted.bam \
-			${bam_dir}/${sample_id}.bam \
-			|| { echo 'sorting the bam files step failed'; status=1; }
-	done < ${inputs["meta"]}
+	run_in_parallel \
+		"$samtools" \
+		"${inputs["meta"]}" \
+		"${option_string}" \
+		|| { echo 'sorting the bam files step failed'; status=1; }
 
 	return $status
 }
 
 _merge_bam_alignments() {
 	local \
-		sample_id \
-		line \
+		option_string \
+		n=$((${inputs["threads"]})) \
 		status=0
 
-	while read -r line; do
-		[[ "$line" == "#"* ]] && continue
-		sample_id=$(echo $line | awk '{print $3}')
+	option_string="MergeBamAlignment \
+		-R ${inputs["ref"]} \
+		-UNMAPPED ${bam_dir}/{3}.unmapped.bam \
+		-ALIGNED ${bam_dir}/{3}.sorted.bam \
+		-O ${bam_dir}/{3}.merged.bam"
 
-		$gatk MergeBamAlignment \
-			-R ${inputs["ref"]} \
-			-UNMAPPED ${bam_dir}/${sample_id}.unmapped.bam \
-			-ALIGNED ${bam_dir}/${sample_id}.sorted.bam \
-			-O ${bam_dir}/${sample_id}.merged.bam \
-			|| { echo 'merge bam alignment step failed'; status=1; }
-	done < ${inputs["meta"]}
+	run_in_parallel \
+		"$gatk" \
+		"${inputs["meta"]}" \
+		"${option_string}" \
+		|| { echo 'merge bam alignment step failed'; status=1; }
 
 	return $status
+}
+
+_add_read_group_info() {
+	# this function may be useful when we don't use
+	# the merge bam alignmnet step
+	local \
+		option_string \
+		n=$((${inputs["threads"]})) \
+		status=0
+
+	option_string="AddOrReplaceReadGroups \
+		-I ${bam_dir}/{3}.sorted.bam \
+		-O ${bam_dir}/{3}.merged.bam \
+		-SM {3} \
+		-PL {4} \
+		-PU {3} \
+		-LB {3}"
+
+	run_in_parallel \
+		"$gatk" \
+		"${inputs["meta"]}" \
+		"${option_string}" \
+		|| { echo 'adding read group info failed'; status=1; }
+
+	return $status
+
 }
 
 _mark_duplicates() {
@@ -465,6 +417,8 @@ _mark_duplicates() {
 		input_bam_stage='merged' \
 		sample_id \
 		line \
+		option_string \
+		n=$((${inputs["threads"]})) \
 		status=0
 
 	# check if merge_bam_alignment step was skipped:
@@ -477,87 +431,41 @@ _mark_duplicates() {
 		fi
 	done < ${inputs["meta"]}
 
-	while read -r line; do
-		[[ "$line" == "#"* ]] && continue
-		sample_id=$(echo $line | awk '{print $3}')
+	option_string="MarkDuplicates \
+		-I ${bam_dir}/{3}.${input_bam_stage}.bam \
+		-O ${bam_dir}/{3}.marked.bam \
+		-M ${bam_dir}/{3}.marked_dup_metrics.txt"
 
-		$gatk MarkDuplicates \
-			-I ${bam_dir}/${sample_id}.${input_bam_stage}.bam \
-			-O ${bam_dir}/${sample_id}.marked.bam \
-			-M ${bam_dir}/${sample_id}.marked_dup_metrics.txt \
-			|| { echo 'marking duplicates step failed'; status=1; }
-	done < ${inputs["meta"]}
+	run_in_parallel \
+		"$gatk" \
+		"${inputs["meta"]}" \
+		"${option_string}" \
+		|| { echo 'marking duplicates step failed'; status=1; }
 
 	return $status
 }
 
 _validate_bam_files() {
 	local \
-		sample_id \
-		line \
+		option_string \
+		n=$((${inputs["threads"]})) \
 		status=0
 
-	while read -r line; do
-		[[ "$line" == "#"* ]] && continue
-		sample_id=$(echo $line | awk '{print $3}')
+	option_string="ValidateSamFile \
+		-I ${bam_dir}/{3}.marked.bam \
+		-R ${inputs["ref"]} \
+		--TMP_DIR ${tmp_dir}/ \
+		-M SUMMARY"
 
-		$gatk ValidateSamFile \
-			-I ${bam_dir}/${sample_id}.marked.bam \
-			-R ${inputs["ref"]} \
-			--TMP_DIR ${tmp_dir}/ \
-			-M SUMMARY \
-			|| { echo 'error validating bam files'; status=1; }
-	done < ${inputs["meta"]}
+	run_in_parallel \
+		"$gatk" \
+		"${inputs["meta"]}" \
+		"${option_string}" \
+		|| { echo 'error validating bam files'; status=1; }
 
 	return $status
 }
 
-
-function pgmap() {
-
-	tmp_prefix=${tmp_dir}/$(random_id)_
-	check_sample || return 1
-	check_ref || return 1
-	check_bwa_idx || return 1
-	check_gatk_dict || return 1 
-	check_samtools_fai || return 1
-
-	id="${tmp_prefix}metadat.txt"
-	awk '{print $1,$2,$3,$4}' ${meta} | sed '/^#/d' > $id
-
-	n=$((50/$t))
-	echo -e "GATK-BWA Alignment and Mark Duplicates.\nYour jobs will be split across $n parallel threads\n"
-	#--- Make unmapped BAM files from raw FASTQ files
-	cat ${id} | parallel --col-sep ' ' echo "FastqToSam -F1 ${rds_dir}/{1} -F2 ${rds_dir}/{2} -SM {3} -PL {4} -RG {3} -O ${bam_dir}/{3}.unmapped.bam" | xargs -I input -P$n sh -c "$gatk input" \
-			|| { echo 'FastqToSam step failed'; return 1; }
-	# align each sample's set of reads to the reference
-	cat ${id} | parallel --col-sep ' ' echo "mem -t $t $ref ${rds_dir}/{1} ${rds_dir}/{2} -o ${sam_dir}/{3}.mapped.sam" | xargs -I input -P$n sh -c "$bwa input" \
-			|| { echo 'bwa mem step failed'; return 1; }
-	# convert aligned sequence sam files to bam
-	cat ${id} | parallel --col-sep ' ' echo "view -O BAM -h ${sam_dir}/{3}.mapped.sam -o ${bam_dir}/{3}.unsorted.mapped.bam" | xargs -I input -P$n sh -c "$samtools input" \
-			|| { echo 'sam to bam step failed'; return 1; }
-	# sort the bam files
-	cat ${id} | parallel --col-sep ' ' echo "sort -O BAM --reference $ref -@ $t -o ${bam_dir}/{3}.mapped.bam ${bam_dir}/{3}.unsorted.mapped.bam" | xargs -I input -P$n sh -c "$samtools input" \
-			|| { echo 'sorting the bam files step failed'; return 1; }
-	# merge bam alignment files
-	cat ${id} | parallel --col-sep ' ' echo "MergeBamAlignment -O ${bam_dir}/{3}.bam -R ${ref} -UNMAPPED ${bam_dir}/{3}.unmapped.bam -ALIGNED ${bam_dir}/{3}.mapped.bam" | xargs -I input -P$n sh -c "$gatk input" \
-			|| { echo 'merge bam alignment step failed'; return 1; }
-
-	#--- Mark duplicates
-	cat ${id} | parallel --col-sep ' ' echo MarkDuplicates -I ${bam_dir}/{3}.bam -O ${bam_dir}/{3}_mkdups.bam -M ${bam_dir}/{3}_marked_dup_metrics.txt --REMOVE_DUPLICATES false | xargs -I input -P$n sh -c "$gatk input" \
-			|| { echo 'failed to mark duplicates'; return 1; }
-	cat ${id} | parallel --col-sep ' ' echo index -b ${bam_dir}/{3}_mkdups.bam | xargs -I input -P$n sh -c "$samtools input" \
-			|| { echo 'failed to index bam files'; return 1; }
-
-	# remove all temporary files
-	{
-		cat ${id} | parallel --col-sep ' ' rm ${bam_dir}/{3}.bam && \
-		cat ${id} | parallel --col-sep ' ' rm ${sam_dir}/{3}.mapped.sam && \
-		cat ${id} | parallel --col-sep ' ' rm ${bam_dir}/{3}*mapped.bam
-	} || { echo 'failed to remove intermediate bam and sam files'; return 1; }
-	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
-
-}
 
 #  indelreal(), pindelreal()
 #
@@ -697,26 +605,20 @@ function varcall() {
 _index_bam_files() {
 	local \
 		bamlist=$1 \
-		line \
-		sample_id \
-		bam_base \
-		bam_file \
+		option_string \
+		n=$((${inputs["threads"]})) \
 		status=0
 
-	while read -r line; do
-		sample_id=$(echo $line | awk '{print $1}')
-		bam_base=$(echo $line | awk '{print $2}')
-		bam_file=${bam_dir}/$bam_base
+	option_string="index \
+		-b \
+		-@ ${inputs["threads"]} \
+		${bam_dir}/{2}"
 
-		# 1. index the analysis-ready bam file
-		printf "Creating SAMTOOLS index: $bam_base..."
-		$samtools index \
-			-b \
-			-@ ${inputs["threads"]} \
-			$bam_file \
-			&& echo 'done' || { echo 'indexing $bam_base failed'; status=1; }
-
-	done < $bamlist
+	run_in_parallel \
+		"$samtools" \
+		"$bamlist" \
+		"${option_string}" \
+		|| { echo 'indexing bam file failed'; status=1; }
 
 	return $status
 }
@@ -724,28 +626,24 @@ _index_bam_files() {
 _call_sample_variants() {
 	local \
 		bamlist=$1 \
-		sample_id \
-		bam_base \
-		bam_file \
+		option_string \
+		n=$((${inputs["threads"]})) \
 		status=0
 
-	while read -r line; do
-		sample_id=$(echo $line | awk '{print $1}')
-		bam_base=$(echo $line | awk '{print $2}')
-		bam_file=${bam_dir}/$bam_base
+	option_string="HaplotypeCaller \
+		-R ${inputs["ref"]} \
+		-I ${bam_dir}/{2} \
+		-O ${vcf_dir}/{1}.raw.g.vcf \
+		$(if [[ ${inputs["ped"]} != NULL ]]; then echo -ped ${inputs["ped"]}; fi) \
+		$(if [[ ${inputs["dbsnp"]} != NULL ]]; then echo --dbsnp ${inputs["dbsnp"]}; fi) \
+		--lenient true \
+		-ERC GVCF"
 
-		# 2. call variants
-		$gatk HaplotypeCaller \
-			-R ${inputs["ref"]} \
-			-I $bam_file \
-			-O ${vcf_dir}/${sample_id}.raw.g.vcf \
-			$(if [[ ${inputs["ped"]} != NULL ]]; then echo -ped ${inputs["ped"]}; fi) \
-			$(if [[ ${inputs["dbsnp"]} != NULL ]]; then echo --dbsnp ${inputs["dbsnp"]}; fi) \
-			--lenient true \
-			-ERC GVCF \
-			|| { echo "HaplotypeCaller failed for $sample_id"; status=1; }
-
-	done < ${tmp_prefix}bam.list
+	run_in_parallel \
+		"$gatk" \
+		"$bamlist" \
+		"${option_string}" \
+		|| { echo "HaplotypeCaller failed"; status=1; }
 
 	return $status
 }
@@ -781,59 +679,6 @@ _genotype_combined_gvcf() {
 	return $status
 }
 
-#  emite_gvcf, pemit_gvcf
-#
-#	* Emite GVCFs from analysis-ready BAM files
-#	* I think this subroutine needs renaming...
-#	inputs:
-#		+ analysis-ready bam files
-#
-#	tools required:
-#		+ gatk HaplotypeCaller
-#
-#	outputs:
-#		+ gvcf files (one per sample)
-#
-function emit_gvcfs() {
-       check_ref; check_gatk_dict; #check_bamlist
-
-       id="$v"
-       bam="$(awk '{print $2}' $v)"
-       for i in $bam; do
-         if [ ! -f "${i/.bam/.bai}" -o ! -f "${i}.bai" ]; then
-            echo "Creating SAMTOOLS index: $i"
-            samtools index -b -@ $t $i;
-         fi
-       done   
-       #--- Per-sample variant calling emitting GVCFs
-       while read -r line; do
-            gatk HaplotypeCaller \
-            	-R $ref \
-            	$(if [[ $ped != NULL ]]; then echo -ped $ped; fi) \
-            	$(if [[ $dbsnp != NULL ]]; then echo --dbsnp $dbsnp; fi) \
-            	--lenient true \
-            	-ERC GVCF \
-            	${line}
-       done < ${id}
-}
-
-function pemit_gvcfs() {
-       check_ref; check_gatk_dict; #check_bamlist
-       mkdir -p vcall
-       id="$v"
-       n=$((50/$t))
-       bam="$(awk '{print $2}' $v)"
-       echo "SAMTOOLS: Index"
-       for i in $bam; do
-         if [ ! -f "${i/.bam/.bai}" -o ! -f "${i}.bai" ]; then
-            echo $i 
-         fi
-       done > sam.index.list
-       cat sam.index.list | parallel --col-sep ' ' echo "index -b -@ $t {}" | xargs -I input -P$n sh -c "samtools input"
-       rm sam.index.list
-       #--- Per-sample variant calling emitting GVCFs
-       sed 's/.bam//g' ${id} | parallel --col-sep ' ' echo HaplotypeCaller {1} {2}.bam -R $ref $(if [[ $ped != NULL ]]; then echo -ped $ped; fi) $(if [[ $dbsnp != NULL ]]; then echo --dbsnp $dbsnp; fi) -ERC GVCF {3} {4} | xargs -I input -P$n sh -c "gatk input"
-}
 
 function vqsr() {
    vcf=$1; op=$2
@@ -912,7 +757,7 @@ function bcfcall() {
 	# unzip the final gvcf file to inspect
 	$bcftools view \
 		-o ${vcf_dir}/${inputs["cohort_id"]}.genotyped.g.vcf \
-		${vcf_dir}/${inputs["cohort_id"]}.genotyped.vcf.g.gz \
+		${vcf_dir}/${inputs["cohort_id"]}.genotyped.g.vcf.gz \
 
 	# remove all temporary files
 	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
@@ -1141,7 +986,7 @@ function prep_bamlist() {
 		samples=$(sed '/^#/d' ${inputs["meta"]} | awk '{print $3}')
 		for i in ${samples[@]}; do
 			for f in ${bam_dir}/$i*.${input_bam_stage}.bam; do
-				echo "$i $(basename $f)"
+				echo -e "$i\t$(basename $f)"
 			done
 		done > ${tmp_prefix}bam.list
 	fi
