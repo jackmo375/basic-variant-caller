@@ -985,9 +985,7 @@ function prep_bamlist() {
 		echo "locating bam files attached to the provided sample ids"
 		samples=$(sed '/^#/d' ${inputs["meta"]} | awk '{print $3}')
 		for i in ${samples[@]}; do
-			for f in ${bam_dir}/$i*.${input_bam_stage}.bam; do
-				echo -e "$i\t$(basename $f)"
-			done
+			echo -e "$i\t$i.${input_bam_stage}.bam"
 		done > ${tmp_prefix}bam.list
 	fi
 
@@ -1014,9 +1012,7 @@ function prep_gvcflist() {
 		echo "locating gvcf files attached to the provided sample ids"
 		samples=$(sed '/^#/d' ${inputs["meta"]} | awk '{print $3}')
 		for i in ${samples[@]}; do
-			for f in ${vcf_dir}/$i*.${input_gvcf_stage}.g.vcf; do
-				echo "-V $f"
-			done
+			echo "-V ${vcf_dir}/$i.${input_gvcf_stage}.g.vcf"
 		done > ${tmp_prefix}gvcf.list
 	fi
 

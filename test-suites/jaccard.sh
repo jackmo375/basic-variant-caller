@@ -24,25 +24,6 @@ workflow () {
 	custom_call check_input_json "checking input json file was provided..."
 
 	custom_call initialize_inputs_hash "initializing input parameter values..."
-
-	# 1. simulate reads:
-	${pip_dir}/${inputs["simulate_id"]}.sh \
-		${pip_dir}/${inputs["simulate_id"]}.${inputs["simulate_inputs_id"]}.json \
-		${inputs["log_prefix"]} \
-		|| { echo 'test suite ERROR: simulating step failed'; exit 1; }
-
-	# 2. run the pipeline and time it:
-	START=$(date +%s.%N)
-	${pip_dir}/${inputs["pipeline_id"]}.sh \
-		${pip_dir}/${inputs["pipeline_id"]}.${inputs["pipeline_inputs_id"]}.json \
-		${inputs["log_prefix"]} \
-		|| { echo 'test suite ERROR: pipeline step failed'; exit 1; }
-	END=$(date +%s.%N)
-	DIFF=$(echo "$END - $START" | bc)
-
-	# 3. compare truth and estimated gvcf files
-
-	custom_call compare_truth_est_vcf "comparing the simulation's truth vcf file against the variant caller output..."
 	
 	custom_call jaccard_index "computing jaccard index..."
 	

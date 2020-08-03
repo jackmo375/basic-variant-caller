@@ -18,15 +18,16 @@ def main():
 	if (int(lines[5].strip()) == int(lines[7].strip())):
 		n_setdiff = [int(lines[1].strip()), int(lines[3].strip())]
 		n_isec    = int(lines[5].strip())
+
+		J = float(n_isec) / float(n_isec + sum(n_setdiff))
+
+		print("******************")
+		print("* Jaccard index: *")
+		print("{0:8.3f}".format(J))
+		print("******************")
+
 	else:
 		raise Exception('set intersection files are not the same')
-
-	J = n_isec / (n_isec + sum(n_setdiff))
-
-	print("******************")
-	print("* Jaccard index: *")
-	print("{0:8.3f}".format(J))
-	print("******************")
 
 
 #
