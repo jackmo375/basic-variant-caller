@@ -21,10 +21,14 @@ def main():
 
 		J = float(n_isec) / float(n_isec + sum(n_setdiff))
 
+		print(J)
+
+		'''
 		print("******************")
 		print("* Jaccard index: *")
 		print("{0:8.3f}".format(J))
 		print("******************")
+		'''
 
 	else:
 		raise Exception('set intersection files are not the same')

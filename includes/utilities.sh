@@ -1,3 +1,14 @@
+#
+#  UTILITIES - bash module
+#
+#	* module of generic bash functions
+#	* that have uses in scripts across the
+#	* whole variant-caller package. 
+#
+#	Jack Morrice
+#
+##############################################
+
 ## output formatting
 red='\033[0;31m'
 green='\033[0;32m'
@@ -10,10 +21,14 @@ custom_call() {
 	# for *top level functions*
 	# call tasks above with colored output
 	# and terminate the workflow on errors
+	local \
+		routine=$1 \
+		msg=$2
+	shift; shift
 
-	printf "${green}$2${nc}"; echo
+	printf "${green}$msg${nc}"; echo
  
-	$1 \
+	$routine "$@" \
 		|| { printf "${red}...failed!${nc}"; echo; exit 1; } \
 		&& { printf "${green}...done."${nc}; echo; }
 }

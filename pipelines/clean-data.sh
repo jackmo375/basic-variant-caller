@@ -20,7 +20,7 @@ workflow() {
 	echo 'cleaning bam files' && rm ${bam_dir}/* 2> /dev/null
 	echo 'cleaning bam files' && rm -r ${vcf_dir}/* 2> /dev/null
 	echo 'cleaning temporary files' && rm ${tmp_dir}/* 2> /dev/null
-	echo 'cleaning log files' && rm -r ${log_dir}/* 2> /dev/null
+	#echo 'cleaning log files' && rm -r ${log_dir}/* 2> /dev/null
 }
 
 #

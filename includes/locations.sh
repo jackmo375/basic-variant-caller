@@ -1,3 +1,14 @@
+#
+#  LOCATIONS - bash config file
+#
+#	* file containing all path definitions
+#	* for directories and executable tools
+#	* used by the variant-caller package.
+#
+#	Jack Morrice
+#
+################################################
+
 
 ## project path variables
 pro_dir=/home/jack/Local/GeneMap/basic-variant-caller
@@ -13,8 +24,10 @@ ref_dir=${dat_dir}/references
 fqc_dir=${dat_dir}/fastqc
 tmp_dir=${dat_dir}/temp
 log_dir=${pro_dir}/logs
+med_dir=${pro_dir}/media
 
 pip_dir=${pro_dir}/pipelines
+tst_dir=${pro_dir}/test-suites
 
 ## alignment & variant calling tools
 bowtie2=${tls_dir}/bowtie2-2.4.1-linux-x86_64
@@ -31,3 +44,5 @@ fastqc=${tls_dir}/fastqc/fastqc
 trimmomatic=${tls_dir}/trimmomatic-0.39/trimmomatic-0.39.jar
 
 jaccard=${tls_dir}/jaccard/jaccard.py
+generatejson=${tls_dir}/jaccard/generate-json.py
+benchmarkR=${tls_dir}/jaccard/benchmark.R
