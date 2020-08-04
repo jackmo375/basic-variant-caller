@@ -28,7 +28,7 @@ workflow() {
 
 	custom_call run_benchmark_test "running pipeline benchmark test..."
 
-	#custom_call plot_benchmark_test "plotting benchmark test results..."
+	custom_call plot_benchmark_test "plotting benchmark test results..."
 
 }
 
@@ -101,4 +101,3 @@ plot_benchmark_test() {
 #  run workfow
 #
 workflow "$@"
-

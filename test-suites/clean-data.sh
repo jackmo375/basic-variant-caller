@@ -17,6 +17,7 @@ workflow() {
 	${pip_dir}/clean-data.sh
 
 	echo 'cleaning reads files' && rm ${rds_dir}/* 2> /dev/null
+	echo 'cleaning truth vcf files' && rm -r ${vcf_dir}/*.truth.* 2> /dev/null
 
 }
 
