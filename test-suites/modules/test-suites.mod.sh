@@ -22,7 +22,7 @@ initialize_inputs_hash() {
 
 	# 1. set default parameter values
 	printf 'setting default parameter values...'
-	inputs["n_runs"]=NULL
+	inputs["runs_per_pipeline"]=1
 	inputs["cohort_id"]=NULL
 	inputs["simulate_id"]=simulate-cohort
 	inputs["simulate_inputs_id"]=basic
@@ -32,7 +32,7 @@ initialize_inputs_hash() {
 
 	# 2. update parameters with arguments from the input json file
 	printf 'updating with arguments from input json file...'
-	value_from_json ${inputs["input_json"]} '.n_runs'				inputs["n_runs"]
+	value_from_json ${inputs["input_json"]} '.runs_per_pipeline'	inputs["runs_per_pipeline"]
 	value_from_json ${inputs["input_json"]} '.cohort_id'			inputs["cohort_id"]
 	value_from_json ${inputs["input_json"]} '.simulate_id'			inputs["simulate_id"]
 	value_from_json ${inputs["input_json"]} '.simulate_inputs_id'	inputs["simulate_inputs_id"]
@@ -42,7 +42,7 @@ initialize_inputs_hash() {
 
 	# 3. check that inputs make sense
 	printf 'checking that parameter values make sense...'
-	check_int ${inputs["n_runs"]} n_runs || status=1
+	check_int ${inputs["runs_per_pipeline"]} runs_per_pipeline || status=1
 	check_id "cohort" ${inputs["cohort_id"]} || status=1
 	## are all the input cohort ids the same?
 	value_from_json \

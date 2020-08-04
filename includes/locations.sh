@@ -23,8 +23,8 @@ rds_dir=${dat_dir}/reads
 ref_dir=${dat_dir}/references
 fqc_dir=${dat_dir}/fastqc
 tmp_dir=${dat_dir}/temp
-log_dir=${pro_dir}/logs
-med_dir=${pro_dir}/media
+log_dir=${dat_dir}/logs
+med_dir=${dat_dir}/media
 
 pip_dir=${pro_dir}/pipelines
 tst_dir=${pro_dir}/test-suites

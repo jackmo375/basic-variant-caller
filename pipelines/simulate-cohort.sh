@@ -91,7 +91,6 @@ _generate_reads() {
 		sample_log_file \
 		input_file \
 		input_string \
-		n=$((${inputs["threads"]})) \
 		status=0
 
 	echo "# sample file for cohort: ${inputs["cohort_id"]}" > ${rds_dir}/${inputs["cohort_id"]}.txt
@@ -114,7 +113,8 @@ _generate_reads() {
 		$simulate \
 		${rds_dir}/${inputs["cohort_id"]}.txt \
 		"${option_string}" \
-		|| return 1
+		"${inputs["threads"]}" \
+		|| status=1
 
 	return $status
 }

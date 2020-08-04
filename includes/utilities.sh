@@ -70,8 +70,10 @@ check_int() {
 	local value=$1
 	local name=$2
 
+	[[ $1 == 'NULL' ]] || return 0
+
 	re=^[0-9]+$
-	if ! [[ $1 =~ ^[0-9]+$ ]] ; then
+	if [[ ! $1 =~ ^[0-9]+$ ]] ; then
    		echo "error: $2 is not a positive integer" >&2; return 1
 	fi
 }
@@ -81,15 +83,15 @@ run_in_parallel() {
 		routine=$1 \
 		parameter_file=$2 \
 		option_string=$3 \
+		n_threads=$(($4)) \
 		status=0
 
 	sed '/^#/d' ${parameter_file} | \
 		parallel \
 			--col-sep '\t' \
 			echo "${option_string}" | \
-		xargs -I input -P$n sh -c "$routine input" \
+		xargs -I input -P$n_threads sh -c "$routine input" \
 		|| return 1
-
 }
 
 set_up_log_directory() {

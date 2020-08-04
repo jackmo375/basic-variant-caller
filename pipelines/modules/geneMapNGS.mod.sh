@@ -138,8 +138,7 @@ initialize_inputs_hash() {
 function fq() {
 	local \
 		tmp_prefix=${tmp_dir}/$(random_id)_ \
-		option_string \
-		n=$((${inputs["threads"]}))
+		option_string
 
 	prep_fq $tmp_prefix || return 1
 
@@ -156,6 +155,8 @@ function fq() {
 		$fastqc \
 		${tmp_prefix}fastq.input.txt \
 		"${option_string}" \
+		${inputs["threads"]} \
+		"${inputs["threads"]}" \
 		|| return 1
 
 	# remove all temporary files
@@ -176,7 +177,6 @@ function fq() {
 function trim() {
 	local \
 		tmp_prefix=${tmp_dir}/$(random_id)_ \
-		n=$((${inputs["threads"]})) \
 		option_string
 
 	prep_trim $tmp_prefix || return 1
@@ -197,6 +197,7 @@ function trim() {
 		"java -jar ${trimmomatic}" \
 		"${tmp_prefix}trim.input.txt" \
 		"${option_string}" \
+		"${inputs["threads"]}" \
 		|| return 1		
 	
 	# remove temporary files
@@ -283,7 +284,6 @@ function gmap() {
 _converting_fastq_to_sam() {
 	local \
 		option_string \
-		n=$((${inputs["threads"]})) \
 		status=0
 
 	option_string="FastqToSam \
@@ -298,6 +298,7 @@ _converting_fastq_to_sam() {
 		"$gatk" \
 		"${inputs["meta"]}" \
 		"${option_string}" \
+		"${inputs["threads"]}" \
 		|| { echo 'FastqToSam step failed'; status=1; }
 
 	return $status
@@ -306,7 +307,6 @@ _converting_fastq_to_sam() {
 _aligning_reads_to_reference() {
 	local \
 		option_string \
-		n=$((${inputs["threads"]})) \
 		status=0
 
 	option_string="mem \
@@ -318,6 +318,7 @@ _aligning_reads_to_reference() {
 		"$bwa" \
 		"${inputs['meta']}" \
 		"${option_string}" \
+		"${inputs["threads"]}" \
 		|| { echo 'bwa mem step failed'; status=1; }
 
 	return $status
@@ -326,7 +327,6 @@ _aligning_reads_to_reference() {
 _converting_sam_to_bam() {
 	local \
 		option_string \
-		n=$((${inputs["threads"]})) \
 		status=0
 
 	option_string="view \
@@ -338,6 +338,7 @@ _converting_sam_to_bam() {
 		"$samtools" \
 		"${inputs["meta"]}" \
 		"${option_string}" \
+		"${inputs["threads"]}" \
 		|| { echo 'sam to bam step failed'; status=1; }
 
 	return $status
@@ -346,7 +347,6 @@ _converting_sam_to_bam() {
 _sorting_bam_files() {
 	local \
 		option_string \
-		n=$((${inputs["threads"]})) \
 		status=0
 
 	option_string="sort \
@@ -360,6 +360,7 @@ _sorting_bam_files() {
 		"$samtools" \
 		"${inputs["meta"]}" \
 		"${option_string}" \
+		"${inputs["threads"]}" \
 		|| { echo 'sorting the bam files step failed'; status=1; }
 
 	return $status
@@ -368,7 +369,6 @@ _sorting_bam_files() {
 _merge_bam_alignments() {
 	local \
 		option_string \
-		n=$((${inputs["threads"]})) \
 		status=0
 
 	option_string="MergeBamAlignment \
@@ -381,6 +381,7 @@ _merge_bam_alignments() {
 		"$gatk" \
 		"${inputs["meta"]}" \
 		"${option_string}" \
+		"${inputs["threads"]}" \
 		|| { echo 'merge bam alignment step failed'; status=1; }
 
 	return $status
@@ -391,7 +392,6 @@ _add_read_group_info() {
 	# the merge bam alignmnet step
 	local \
 		option_string \
-		n=$((${inputs["threads"]})) \
 		status=0
 
 	option_string="AddOrReplaceReadGroups \
@@ -406,6 +406,7 @@ _add_read_group_info() {
 		"$gatk" \
 		"${inputs["meta"]}" \
 		"${option_string}" \
+		"${inputs["threads"]}" \
 		|| { echo 'adding read group info failed'; status=1; }
 
 	return $status
@@ -418,7 +419,6 @@ _mark_duplicates() {
 		sample_id \
 		line \
 		option_string \
-		n=$((${inputs["threads"]})) \
 		status=0
 
 	# check if merge_bam_alignment step was skipped:
@@ -440,6 +440,7 @@ _mark_duplicates() {
 		"$gatk" \
 		"${inputs["meta"]}" \
 		"${option_string}" \
+		"${inputs["threads"]}" \
 		|| { echo 'marking duplicates step failed'; status=1; }
 
 	return $status
@@ -448,7 +449,6 @@ _mark_duplicates() {
 _validate_bam_files() {
 	local \
 		option_string \
-		n=$((${inputs["threads"]})) \
 		status=0
 
 	option_string="ValidateSamFile \
@@ -461,6 +461,7 @@ _validate_bam_files() {
 		"$gatk" \
 		"${inputs["meta"]}" \
 		"${option_string}" \
+		"${inputs["threads"]}" \
 		|| { echo 'error validating bam files'; status=1; }
 
 	return $status
@@ -606,7 +607,6 @@ _index_bam_files() {
 	local \
 		bamlist=$1 \
 		option_string \
-		n=$((${inputs["threads"]})) \
 		status=0
 
 	option_string="index \
@@ -618,6 +618,7 @@ _index_bam_files() {
 		"$samtools" \
 		"$bamlist" \
 		"${option_string}" \
+		"${inputs["threads"]}" \
 		|| { echo 'indexing bam file failed'; status=1; }
 
 	return $status
@@ -627,7 +628,6 @@ _call_sample_variants() {
 	local \
 		bamlist=$1 \
 		option_string \
-		n=$((${inputs["threads"]})) \
 		status=0
 
 	option_string="HaplotypeCaller \
@@ -643,6 +643,7 @@ _call_sample_variants() {
 		"$gatk" \
 		"$bamlist" \
 		"${option_string}" \
+		"${inputs["threads"]}" \
 		|| { echo "HaplotypeCaller failed"; status=1; }
 
 	return $status
