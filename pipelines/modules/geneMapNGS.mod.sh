@@ -49,7 +49,7 @@ initialize_inputs_hash() {
 	local status=0
 
 	# 1. set default parameter values
-	printf 'setting default parameter values...'
+	printf '  setting default parameter values...'
 	inputs["meta"]=NULL
 	inputs["cohort_id"]=NULL
 	inputs["threads"]=1
@@ -62,10 +62,10 @@ initialize_inputs_hash() {
 	inputs["glist"]=NULL
 	inputs["ped"]=NULL
 	inputs["dbsnp"]=NULL
-	echo 'done'
+	echo '...done'
 
 	# 2. update parameters with arguments from the input json file
-	printf 'updating with arguments from input json file...'
+	printf '  updating with arguments from input json file...'
 	value_from_json ${inputs["input_json"]} '.cohort_id'   inputs["cohort_id"]
 	value_from_json ${inputs["input_json"]} '.meta_base'   inputs["meta_base"]
 	if [[ ! "${inputs["cohort_id"]}" == NULL ]]; then
@@ -82,10 +82,10 @@ initialize_inputs_hash() {
 	value_from_json ${inputs["input_json"]} '.glist' 	   inputs["glist"]
 	value_from_json ${inputs["input_json"]} '.ped' 	   	   inputs["ped"]
 	value_from_json ${inputs["input_json"]} '.dbsnp' 	   inputs["dbsnp"]
-	echo 'done'
+	echo '...done'
 
 	# 3. check that inputs make sense
-	printf 'checking that parameter values make sense...'
+	printf '  checking that parameter values make sense...'
 	check_sample || status=1
 	check_int ${inputs["threads"]} threads || status=1
 	check_int ${inputs["trim_minlen"]} trim_minlen || status=1
@@ -96,7 +96,7 @@ initialize_inputs_hash() {
 	check_gatk_dict || status=1
 	check_samtools_fai || status=1
 	## still need to write checks for the other input parameters...
-	[[ $status == 0 ]] && echo 'done'
+	[[ $status == 0 ]] && echo '...done'
 
 	# 4. set up output logging 
 	set_up_log_directory || { echo 'seting up log directory failed'; status=1; }
@@ -142,22 +142,24 @@ function fq() {
 
 	prep_fq $tmp_prefix || return 1
 
-	echo -e "running FastQC"
-	echo -e "Your jobs will be split across $n parallel threads"
-
 	option_string="\
 		-t ${inputs["threads"]} \
-		{1} \
-		$(if [ -n {2} ]; then echo {2}; fi) \
+		{2} \
+		$(if [ -n {3} ]; then echo {3}; fi) \
 		-o ${fqc_dir}/"
 
+	log_file_sting="${inputs["log_prefix"]}${inputs["cohort_id"]}.{1}.log"
+
+	printf "  checking fastq quality with FASTQC..."
 	run_in_parallel \
 		$fastqc \
 		${tmp_prefix}fastq.input.txt \
 		"${option_string}" \
 		${inputs["threads"]} \
 		"${inputs["threads"]}" \
-		|| return 1
+		"${log_file_sting}" \
+		|| { echo "...failed!"; return 1; } \
+		&& { echo "...done."; return 0; }
 
 	# remove all temporary files
 	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
@@ -181,9 +183,6 @@ function trim() {
 
 	prep_trim $tmp_prefix || return 1
 
-	echo -e "running Trimmomatic"
-	echo -e "Your jobs will be split across $n parallel threads"
-
 	option_string="PE \
 		-phred33 {} \
 		$(if [[ ${inputs["trim_adap"]} != NULL ]]; then check_adapter; fi) \
@@ -193,12 +192,17 @@ function trim() {
 		MINLEN:${inputs["trim_minlen"]} \
 		-threads ${inputs["threads"]}"
 
+	log_file_sting="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
+
+	printf "  trimming reads with trimmomatic..."
 	run_in_parallel \
 		"java -jar ${trimmomatic}" \
 		"${tmp_prefix}trim.input.txt" \
 		"${option_string}" \
 		"${inputs["threads"]}" \
-		|| return 1		
+		"${log_file_sting}" \
+		|| { echo "  ...failed!"; return 1; } \
+		&& { echo "  ...done."; return 0; }	
 	
 	# remove temporary files
 	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
@@ -227,8 +231,6 @@ function trim() {
 #			saved as compressed bam files
 #
 function bmap() {
-
-	echo -e "running BWA-BCFTOOLS Alignment/Mapping\n"
 
 	_aligning_reads_to_reference || return 1
 
@@ -263,8 +265,6 @@ function bmap() {
 #
 function gmap() {
 
-	echo "performing alignment; your jobs will run in serial"
-
 	_converting_fastq_to_sam || return 1
 
 	_aligning_reads_to_reference || return 1
@@ -294,12 +294,17 @@ _converting_fastq_to_sam() {
 		-RG {3} \
 		-O ${bam_dir}/{3}.unmapped.bam"
 
+	log_file_sting="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
+
+	printf "  converting fastq files to unmapped bam..."
 	run_in_parallel \
 		"$gatk" \
 		"${inputs["meta"]}" \
 		"${option_string}" \
 		"${inputs["threads"]}" \
-		|| { echo 'FastqToSam step failed'; status=1; }
+		"${log_file_sting}" \
+		|| { echo "...failed!"; return 1; } \
+		&& { echo "...done."; return 0; }
 
 	return $status
 }
@@ -314,12 +319,17 @@ _aligning_reads_to_reference() {
 		${inputs['ref']} ${rds_dir}/{1} ${rds_dir}/{2} \
 		-o ${sam_dir}/{3}.sam"
 
+	log_file_sting="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
+
+	printf "  aligning reads to reference with bwa..."
 	run_in_parallel \
 		"$bwa" \
 		"${inputs['meta']}" \
 		"${option_string}" \
 		"${inputs["threads"]}" \
-		|| { echo 'bwa mem step failed'; status=1; }
+		"${log_file_sting}" \
+		|| { echo "...failed!"; return 1; } \
+		&& { echo "...done."; return 0; }
 
 	return $status
 }
@@ -334,12 +344,17 @@ _converting_sam_to_bam() {
 		-O BAM \
 		-o ${bam_dir}/{3}.bam"
 
+	log_file_sting="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
+
+	printf "  converting mapped sam files to bam..."
 	run_in_parallel \
 		"$samtools" \
 		"${inputs["meta"]}" \
 		"${option_string}" \
 		"${inputs["threads"]}" \
-		|| { echo 'sam to bam step failed'; status=1; }
+		"${log_file_sting}" \
+		|| { echo "...failed!"; return 1; } \
+		&& { echo "...done."; return 0; }
 
 	return $status
 }
@@ -356,12 +371,17 @@ _sorting_bam_files() {
 		-o ${bam_dir}/{3}.sorted.bam \
 		${bam_dir}/{3}.bam"
 
+	log_file_sting="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
+
+	printf "  sorting bam files..."
 	run_in_parallel \
 		"$samtools" \
 		"${inputs["meta"]}" \
 		"${option_string}" \
 		"${inputs["threads"]}" \
-		|| { echo 'sorting the bam files step failed'; status=1; }
+		"${log_file_sting}" \
+		|| { echo "...failed!"; return 1; } \
+		&& { echo "...done."; return 0; }
 
 	return $status
 }
@@ -377,12 +397,18 @@ _merge_bam_alignments() {
 		-ALIGNED ${bam_dir}/{3}.sorted.bam \
 		-O ${bam_dir}/{3}.merged.bam"
 
+	log_file_sting="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
+
+	printf "  merging aligned and unaligned bam files..."
 	run_in_parallel \
 		"$gatk" \
 		"${inputs["meta"]}" \
 		"${option_string}" \
 		"${inputs["threads"]}" \
-		|| { echo 'merge bam alignment step failed'; status=1; }
+		"${log_file_sting}" \
+		"${log_file_sting}" \
+		|| { echo "...failed!"; return 1; } \
+		&& { echo "...done."; return 0; }
 
 	return $status
 }
@@ -402,12 +428,17 @@ _add_read_group_info() {
 		-PU {3} \
 		-LB {3}"
 
+	log_file_sting="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
+
+	printf "  adding read group information to bam files..."
 	run_in_parallel \
 		"$gatk" \
 		"${inputs["meta"]}" \
 		"${option_string}" \
 		"${inputs["threads"]}" \
-		|| { echo 'adding read group info failed'; status=1; }
+		"${log_file_sting}" \
+		|| { echo "...failed!"; return 1; } \
+		&& { echo "...done."; return 0; }
 
 	return $status
 
@@ -436,12 +467,17 @@ _mark_duplicates() {
 		-O ${bam_dir}/{3}.marked.bam \
 		-M ${bam_dir}/{3}.marked_dup_metrics.txt"
 
+	log_file_sting="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
+
+	printf "  marking duplicates..."
 	run_in_parallel \
 		"$gatk" \
 		"${inputs["meta"]}" \
 		"${option_string}" \
 		"${inputs["threads"]}" \
-		|| { echo 'marking duplicates step failed'; status=1; }
+		"${log_file_sting}" \
+		|| { echo "...failed!"; return 1; } \
+		&& { echo "...done."; return 0; }
 
 	return $status
 }
@@ -457,12 +493,17 @@ _validate_bam_files() {
 		--TMP_DIR ${tmp_dir}/ \
 		-M SUMMARY"
 
+	log_file_sting="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
+
+	printf "  validating bam files..."
 	run_in_parallel \
 		"$gatk" \
 		"${inputs["meta"]}" \
 		"${option_string}" \
 		"${inputs["threads"]}" \
-		|| { echo 'error validating bam files'; status=1; }
+		"${log_file_sting}" \
+		|| { echo "...failed!"; return 1; } \
+		&& { echo "...done."; return 0; }
 
 	return $status
 }
@@ -614,12 +655,17 @@ _index_bam_files() {
 		-@ ${inputs["threads"]} \
 		${bam_dir}/{2}"
 
+	log_file_sting="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
+
+	printf "  indexing bam files..."
 	run_in_parallel \
 		"$samtools" \
 		"$bamlist" \
 		"${option_string}" \
 		"${inputs["threads"]}" \
-		|| { echo 'indexing bam file failed'; status=1; }
+		"${log_file_sting}" \
+		|| { echo "...failed!"; return 1; } \
+		&& { echo "...done."; return 0; }
 
 	return $status
 }
@@ -639,12 +685,17 @@ _call_sample_variants() {
 		--lenient true \
 		-ERC GVCF"
 
+	log_file_sting="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
+
+	printf "  calling sample variants with gatk HaplotypeCaller..."
 	run_in_parallel \
 		"$gatk" \
 		"$bamlist" \
 		"${option_string}" \
 		"${inputs["threads"]}" \
-		|| { echo "HaplotypeCaller failed"; status=1; }
+		"${log_file_sting}" \
+		|| { echo "...failed!"; return 1; } \
+		&& { echo "...done."; return 0; }
 
 	return $status
 }
@@ -654,13 +705,16 @@ _combine_sample_gvcfs() {
 		gvcf_list=$1 \
 		status=0
 
+	printf "  combining sample gvcf files..."
 	$gatk CombineGVCFs \
 		-R ${inputs["ref"]} \
 		--arguments_file $gvcf_list \
 		$(if [[ ${inputs["dbsnp"]} != NULL ]]; then echo --dbsnp ${inputs["dbsnp"]}; fi) \
 		$(if [[ ${inputs["ped"]} != NULL ]]; then echo -ped {inputs["ped"]}; fi) \
 		-O ${vcf_dir}/${inputs["cohort_id"]}.combined.g.vcf \
-		|| { echo 'failed to combine gvcf files'; status=1; }
+		&>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
+		|| { echo "...failed!"; return 1; } \
+		&& { echo "...done."; return 0; }
 
 	return $status
 }
@@ -669,13 +723,16 @@ _genotype_combined_gvcf() {
 	local \
 		status=0
 
+	printf "  genotyping cohort's combined gvcf file..."
 	$gatk GenotypeGVCFs \
 		-R ${inputs["ref"]} \
 		-V ${vcf_dir}/${inputs["cohort_id"]}.combined.g.vcf \
 		$(if [[ ${inputs["dbsnp"]} != NULL ]]; then echo --dbsnp ${inputs["dbsnp"]}; fi) \
 		$(if [[ ${inputs["ped"]} != NULL ]]; then echo -ped {inputs["ped"]}; fi) \
 		-O ${vcf_dir}/${inputs["cohort_id"]}.genotyped.g.vcf \
-		|| { echo 'failed to genotype cohort gvcf file'; status=1; }
+		&>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
+		|| { echo "...failed!"; return 1; } \
+		&& { echo "...done."; return 0; }
 
 	return $status
 }
@@ -732,6 +789,7 @@ function bcfcall() {
 
 	cat ${tmp_prefix}bam.list | awk -v d=${bam_dir}/ '{print d$2}' > ${tmp_prefix}bam.inputs
 
+	printf "  piling up sample gvcf files before joint calling..."
 	$bcftools mpileup \
 		--min-MQ 1 \
 		--thread ${inputs["threads"]} \
@@ -739,26 +797,41 @@ function bcfcall() {
 		-Oz \
 		-o ${vcf_dir}/${inputs["cohort_id"]}.piledup.vcf.gz \
 		-b ${tmp_prefix}bam.inputs \
-		|| { echo 'bcftools mpileup failed'; return 1; }
+		&>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
+		|| { echo "...failed!"; return 1; } \
+		&& { echo "...done."; }
 
+	printf "  indexing cohort piledup gvcf file..."
 	$bcftools index -f -t ${vcf_dir}/${inputs["cohort_id"]}.piledup.vcf.gz \
-		|| { echo 'failed to index bcftools piledup gvcf file'; return 1; }
+		&>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
+		|| { echo "...failed!"; return 1; } \
+		&& { echo "...done."; }
 
+	printf " joint-calling variants for cohort with bcftools..."
 	$bcftools call \
 		-mv \
 		--threads ${inputs["threads"]} \
 		-Oz \
 		-o ${vcf_dir}/${inputs["cohort_id"]}.genotyped.g.vcf.gz \
 		${vcf_dir}/${inputs["cohort_id"]}.piledup.vcf.gz \
-		|| { echo 'failed to call variants'; return 1; }
+		&>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
+		|| { echo "...failed!"; return 1; } \
+		&& { echo "...done."; }
 
+	printf "  indexing the joint-called cohort gvcf file..."
 	$bcftools index -f -t ${vcf_dir}/${inputs["cohort_id"]}.genotyped.g.vcf.gz \
-		|| { echo 'failed to index bcftools called gvcf file'; return 1; }
+		&>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
+		|| { echo "...failed!"; return 1; } \
+		&& { echo "...done."; }
 
 	# unzip the final gvcf file to inspect
+	printf "  unzipping the joint-called cohort gvcf file..."
 	$bcftools view \
 		-o ${vcf_dir}/${inputs["cohort_id"]}.genotyped.g.vcf \
 		${vcf_dir}/${inputs["cohort_id"]}.genotyped.g.vcf.gz \
+		&>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
+		|| { echo "...failed!"; return 1; } \
+		&& { echo "...done."; }
 
 	# remove all temporary files
 	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
@@ -777,7 +850,7 @@ function bcfcall() {
 #	+ check_gvcflist()
 #
 
-#--- Check References and their indixes
+#--- Check References and their indexes
 
 
 #--- Check additional [optional] references (Known sites) for IndelRealignment, BQSR, and VQSR
@@ -844,11 +917,10 @@ function check_sample() {
 			[[ -s ${rds_dir}/"${line_array[0]}" ]] || { echo "Error: ${line_array[0]} does not exist or is empty"; return 1; }
 			[[ -s ${rds_dir}/"${line_array[1]}" ]] || { echo "Error: ${line_array[0]} does not exist or is empty"; return 1; }
 
-			# create a new log file for each sample if they don't already exist:
-			sample_log_file=${inputs["log_prefix"]}${inputs["cohort_id"]}.s_${sample_id}.log
-			[[ -s $sample_log_file ]] || { > $sample_log_file && echo "output logs for sample $s will be saved in $sample_log_file"; }
+
 		fi
 	done < ${inputs["meta"]}
+
 }
 
 #--- Prepare input for BQSR
@@ -903,7 +975,7 @@ function prep_fq() {
 	while IFS= read -r line; do
 		if [[ ! $line == "#"* ]]; then
 			line_array=( $line )
-			echo "${line_array[0]}" >> ${tmp_prefix}fwd.txt
+			echo -e "${line_array[3]}\t${line_array[0]}" >> ${tmp_prefix}fwd.txt
 		fi
 	done < ${inputs["meta"]}
 
@@ -911,16 +983,16 @@ function prep_fq() {
 	while IFS= read -r line; do
 		if [[ ! $line == "#"* ]]; then
 			line_array=( $line )
-			echo "${line_array[1]}" >> ${tmp_prefix}rev.txt
+			echo -e "${line_array[3]}\t${line_array[1]}" >> ${tmp_prefix}rev.txt
 		fi
 	done < ${inputs["meta"]}
 
 	if [[ ! -s "${tmp_prefix}rev.txt" ]]; then
 		cp ${tmp_prefix}fwd.txt ${tmp_prefix}forward_reverse.txt
-		awk -v d="${rds_dir}/" '{print d$1}' ${tmp_prefix}forward_reverse.txt > ${tmp_prefix}fastq.input.txt
+		awk -v d="${rds_dir}/" '{print $1 d$2}' ${tmp_prefix}forward_reverse.txt > ${tmp_prefix}fastq.input.txt
 	else
 		paste ${tmp_prefix}fwd.txt ${tmp_prefix}rev.txt | awk '{print $1,$2}' > ${tmp_prefix}forward_reverse.txt
-		awk -v d="${rds_dir}/" '{print d$1,d$2}' ${tmp_prefix}forward_reverse.txt > ${tmp_prefix}fastq.input.txt
+		awk -v d="${rds_dir}/" '{print $1 d$2,d$3}' ${tmp_prefix}forward_reverse.txt > ${tmp_prefix}fastq.input.txt
 	fi
 	rm ${tmp_prefix}fwd.txt ${tmp_prefix}rev.txt
 
@@ -979,11 +1051,9 @@ function prep_bamlist() {
 		f
 
 	if [[ ! ${inputs["blist"]}==NULL ]]; then
-		echo "using user's input bam list $blist"
 		cat ${inputs["blist"]} > ${tmp_prefix}bam.list 
 		return 0
 	else
-		echo "locating bam files attached to the provided sample ids"
 		samples=$(sed '/^#/d' ${inputs["meta"]} | awk '{print $3}')
 		for i in ${samples[@]}; do
 			echo -e "$i\t$i.${input_bam_stage}.bam"
@@ -1010,7 +1080,6 @@ function prep_gvcflist() {
 		cat ${inputs["glist"]} > ${tmp_prefix}gvcf.list 
 		return 0
 	else
-		echo "locating gvcf files attached to the provided sample ids"
 		samples=$(sed '/^#/d' ${inputs["meta"]} | awk '{print $3}')
 		for i in ${samples[@]}; do
 			echo "-V ${vcf_dir}/$i.${input_gvcf_stage}.g.vcf"

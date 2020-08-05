@@ -21,27 +21,27 @@ initialize_inputs_hash() {
 		status=0
 
 	# 1. set default parameter values
-	printf 'setting default parameter values...'
+	printf '  setting default parameter values...'
 	inputs["runs_per_pipeline"]=1
 	inputs["cohort_id"]=NULL
 	inputs["simulate_id"]=simulate-cohort
 	inputs["simulate_inputs_id"]=basic
 	inputs["pipeline_id"]=gatkall
 	inputs["pipeline_inputs_id"]=basic
-	echo 'done'
+	echo '...done'
 
 	# 2. update parameters with arguments from the input json file
-	printf 'updating with arguments from input json file...'
+	printf '  updating with arguments from input json file...'
 	value_from_json ${inputs["input_json"]} '.runs_per_pipeline'	inputs["runs_per_pipeline"]
 	value_from_json ${inputs["input_json"]} '.cohort_id'			inputs["cohort_id"]
 	value_from_json ${inputs["input_json"]} '.simulate_id'			inputs["simulate_id"]
 	value_from_json ${inputs["input_json"]} '.simulate_inputs_id'	inputs["simulate_inputs_id"]
 	value_from_json ${inputs["input_json"]} '.pipeline_id'			inputs["pipeline_id"]
 	value_from_json ${inputs["input_json"]} '.pipeline_inputs_id'	inputs["pipeline_inputs_id"]
-	echo 'done'
+	echo '...done'
 
 	# 3. check that inputs make sense
-	printf 'checking that parameter values make sense...'
+	printf '  checking that parameter values make sense...'
 	check_int ${inputs["runs_per_pipeline"]} runs_per_pipeline || status=1
 	check_id "cohort" ${inputs["cohort_id"]} || status=1
 	## are all the input cohort ids the same?
@@ -60,7 +60,7 @@ initialize_inputs_hash() {
 	[ -s ${pip_dir}/${inputs["pipeline_id"]}.${inputs["pipeline_inputs_id"]}.json ] || { echo "test suite ERROR: ${pip_dir}/${inputs["pipeline_id"]}.${inputs["pipeline_inputs_id"]}.json file not found or is empty"; status=1; }
 
 	## still need to write checks for the other input parameters...
-	[[ $status == 0 ]] && echo 'done'
+	[[ $status == 0 ]] && echo '...done'
 
 	# 4. set up logging information
 	set_up_log_directory || { echo 'seting up log directory failed'; status=1; }
@@ -77,26 +77,41 @@ compare_truth_est_vcf()
 	# need to zip the vcf files, because bcf tools only accepts
 	# gzipped inputs
 
-	echo "zipping vcf files"
+	printf "  zipping genotyped vcf files..."
 	$bcftools view \
 		${vcf_dir}/${inputs["cohort_id"]}.genotyped.g.vcf \
 		-Oz \
-		-o ${vcf_dir}/${inputs["cohort_id"]}.genotyped.g.vcf.gz
+		-o ${vcf_dir}/${inputs["cohort_id"]}.genotyped.g.vcf.gz \
+		&>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
+		|| { echo "...failed!"; return 1; } \
+		&& { echo "...done."; }
 
+	printf "  zipping truth vcf files..."
 	$bcftools view \
 		${vcf_dir}/${inputs["cohort_id"]}.truth.sorted.vcf \
 		-Oz \
-		-o ${vcf_dir}/${inputs["cohort_id"]}.truth.sorted.vcf.gz
+		-o ${vcf_dir}/${inputs["cohort_id"]}.truth.sorted.vcf.gz \
+		&>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
+		|| { echo "...failed!"; return 1; } \
+		&& { echo "...done."; }
 
-	echo "building indices for the zipped vcf files"
-	$bcftools index ${vcf_dir}/${inputs["cohort_id"]}.genotyped.g.vcf.gz
-	$bcftools index ${vcf_dir}/${inputs["cohort_id"]}.truth.sorted.vcf.gz
+	printf "  building indices for the zipped vcf files..."
+	$bcftools index ${vcf_dir}/${inputs["cohort_id"]}.genotyped.g.vcf.gz \
+		&>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
+		|| { echo "...failed!"; return 1; }
+	$bcftools index ${vcf_dir}/${inputs["cohort_id"]}.truth.sorted.vcf.gz \
+		&>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
+		|| { echo "...failed!"; return 1; } \
+		&& { echo "...done."; }
 
-	echo "computing the set difference and intersection vcf files"
+	printf "  computing the set difference and intersection vcf files..."
 	$bcftools isec \
 		${vcf_dir}/${inputs["cohort_id"]}.genotyped.g.vcf.gz \
 		${vcf_dir}/${inputs["cohort_id"]}.truth.sorted.vcf.gz \
-		-p ${vcf_dir}/${inputs["cohort_id"]}.isec	
+		-p ${vcf_dir}/${inputs["cohort_id"]}.isec \
+		|| { echo "...failed!"; return 1; } \
+		&& { echo "...done."; }
+	
 }
 
 jaccard_index() {
@@ -111,18 +126,28 @@ jaccard_index() {
 	#	0000, 0001 are set difference files, and
 	#	0002, 0003 are intersection files
 
+	printf '  computing jaccard index...'
 	$gatk CountVariants \
-		-V ${vcf_dir}/${inputs["cohort_id"]}.isec/0000.vcf > ${tmp_prefix}${inputs["cohort_id"]}.isec
+		-V ${vcf_dir}/${inputs["cohort_id"]}.isec/0000.vcf 1> ${tmp_prefix}${inputs["cohort_id"]}.isec \
+		2>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
+		|| { echo "...failed!"; return 1; }
 	$gatk CountVariants \
-		-V ${vcf_dir}/${inputs["cohort_id"]}.isec/0001.vcf >> ${tmp_prefix}${inputs["cohort_id"]}.isec
+		-V ${vcf_dir}/${inputs["cohort_id"]}.isec/0001.vcf 1>> ${tmp_prefix}${inputs["cohort_id"]}.isec \
+		2>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
+		|| { echo "...failed!"; return 1; }
 	$gatk CountVariants \
-		-V ${vcf_dir}/${inputs["cohort_id"]}.isec/0002.vcf >> ${tmp_prefix}${inputs["cohort_id"]}.isec
+		-V ${vcf_dir}/${inputs["cohort_id"]}.isec/0002.vcf 1>> ${tmp_prefix}${inputs["cohort_id"]}.isec \
+		2>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
+		|| { echo "...failed!"; return 1; }
 	$gatk CountVariants \
-		-V ${vcf_dir}/${inputs["cohort_id"]}.isec/0003.vcf >> ${tmp_prefix}${inputs["cohort_id"]}.isec
+		-V ${vcf_dir}/${inputs["cohort_id"]}.isec/0003.vcf 1>> ${tmp_prefix}${inputs["cohort_id"]}.isec \
+		2>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
+		|| { echo "...failed!"; return 1; }
 
 	myresult=$(python $jaccard \
 		--input ${tmp_prefix}${inputs["cohort_id"]}.isec)
 
 	eval $__resultvar="'$myresult'"
 
+	echo '...done'
 }

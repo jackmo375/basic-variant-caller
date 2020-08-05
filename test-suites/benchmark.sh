@@ -2,8 +2,8 @@
 #  BENCHMARK - test suite
 #
 #	* comparing multiple pipelines
-#	* via comparison plots of speed,
-#	* memory consumption, and accuracy
+#	* via comparison plots of speed
+#	* and accuracy
 #
 #	Jack Morrice
 #

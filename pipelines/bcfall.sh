@@ -20,13 +20,13 @@ workflow() {
 
 	declare -A inputs=( ["input_json"]=${argv[0]} ["log_prefix"]=${argv[1]})
 
-	custom_call initialize_inputs_hash "initializing input parameter values..."
+	custom_call initialize_inputs_hash "initializing pipeline input parameter values..."
 
-	custom_call fq "checking read file quality..."
+	#custom_call fq "checking read file quality..."
 
-	custom_call trim "trimming read files..."
+	#custom_call trim "trimming read files..."
 
-	custom_call bmap "map reads to the reference with bwa..."
+	custom_call bmap "mapping reads to the reference with bwa..."
 
 	custom_call bcfcall "calling variants with bcftools..."
 

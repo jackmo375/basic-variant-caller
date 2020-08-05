@@ -39,12 +39,11 @@ custom_call_2() {
 	# and return 1 on errors
 	local \
 		msg=$1 \
-		log_file=$2 \
-		routine=$3
+		routine=$2
 	shift; shift; shift
  
  	printf "$msg"
-	$routine "$@" &>>$log_file \
+	$routine "$@" \
 		|| { printf "...failed!"; echo; return 1; } \
 		&& { printf "...done."; echo; return 0; }
 }
@@ -83,20 +82,29 @@ run_in_parallel() {
 		routine=$1 \
 		parameter_file=$2 \
 		option_string=$3 \
-		n_threads=$(($4)) \
+		n_threads=$4 \
+		output_string=$5 \
 		status=0
 
 	sed '/^#/d' ${parameter_file} | \
 		parallel \
 			--col-sep '\t' \
-			echo "${option_string}" | \
-		xargs -I input -P$n_threads sh -c "$routine input" \
-		|| return 1
+			echo -e "${option_string} \&\>\> ${output_string}" | \
+			xargs \
+				-I input \
+				-P $n_threads \
+				bash -c "$routine input" \
+				|| return 1
 }
 
 set_up_log_directory() {
+	local cohort_log_file
+	
 	if [[ -z ${inputs["log_prefix"]} ]]; then
 		inputs["log_prefix"]=${log_dir}/$(random_id)/ && mkdir ${inputs["log_prefix"]}
-		echo "output logs will be saved to ${inputs["log_prefix"]}"
+		# create cohort log file
+		cohort_log_file=${inputs["log_prefix"]}${inputs["cohort_id"]}.log
+		[[ -s $cohort_log_file ]] || > $cohort_log_file
+		echo "==> output logs will be saved to ${inputs["log_prefix"]}"
 	fi
 }

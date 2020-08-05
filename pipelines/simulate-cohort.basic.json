@@ -3,6 +3,7 @@
   "ref_base": "lambda-virus.fa",
   "read_type": "pe",
 
+  "threads": 8,
   "n_samples": 20,
 
   "has_snps": 1,
