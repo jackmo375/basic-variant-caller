@@ -50,8 +50,8 @@ workflow () {
 	custom_call jaccard_index "computing jaccard index..." \
 		jacc_value
 	
-	echo "Jaccard value: $jacc_value"
-	echo "pipeline runtime: $DIFF seconds"
+	echo "  Jaccard value: $jacc_value"
+	echo "  pipeline runtime: $DIFF seconds"
 
 }
 
