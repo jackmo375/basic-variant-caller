@@ -4,7 +4,7 @@
   "read_type": "pe",
 
   "threads": 8,
-  "n_samples": 20,
+  "n_samples": 4,
 
   "has_snps": 1,
   "psnp": 0.001,
@@ -14,5 +14,5 @@
   "nrearr_av": 3,
   "nreads": 10000,
   "rdlen_av": 75,
-  "rdlen_min": 40
+  "rdlen_min": 20
 }

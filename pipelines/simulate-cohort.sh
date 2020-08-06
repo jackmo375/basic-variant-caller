@@ -114,12 +114,12 @@ _generate_reads() {
 		sample_log_file=${inputs["log_prefix"]}${prefix}.log
 		[[ -s $sample_log_file ]] || > $sample_log_file
 
-		echo -e "${prefix}.reads_1.fq\t${prefix}.reads_2.fq\ts_$s\tILLUMINA" >> ${rds_dir}/${inputs["cohort_id"]}.txt
+		echo -e "${prefix}.raw_1P.fq\t${prefix}.raw_2P.fq\ts_$s\tILLUMINA" >> ${rds_dir}/${inputs["cohort_id"]}.txt
 	done
 
 	option_string="GenerateReads \
 		--input_ref ${tmp_prefix}${inputs["cohort_id"]}.fa \
-		--reads_prefix "${rds_dir}/"${inputs["cohort_id"]}.{3}.reads \
+		--reads_prefix "${rds_dir}/"${inputs["cohort_id"]}.{3}.raw \
 		--input_json ${inputs["input_json"]}"
 
 	log_file_sting="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"

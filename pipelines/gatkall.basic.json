@@ -2,5 +2,6 @@
   "cohort_id": "c_1",
   "ref_base": "lambda-virus.fa",
   "threads": 8,
-  "trim_minlen": 40
+  "trim_minlen": 40,
+  "trim_av_qual_min": 1
 }

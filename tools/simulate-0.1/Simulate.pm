@@ -318,8 +318,8 @@ sub generate_reads {
 	print STDERR "Simulating reads...\n";
 	my $rflen = length($$rf);
 	if($inputs->{paired}) {
-		open(RD1, ">$inputs->{prefix}_1.fq") || die;
-		open(RD2, ">$inputs->{prefix}_2.fq") || die;
+		open(RD1, ">$inputs->{prefix}_1P.fq") || die;
+		open(RD2, ">$inputs->{prefix}_2P.fq") || die;
 		for(my $i = 0; $i < scalar(@fraglens); $i++) {
 			# Extract fragment
 			my $flen = $fraglens[$i];
@@ -361,7 +361,7 @@ sub generate_reads {
 		}
 		close(RD1);
 		close(RD2);
-		print STDERR "Made pairs: <base>_1.fq and <base>_2.fq where <base> is:\n $inputs->{prefix}\n";
+		print STDERR "Made pairs: <base>_1P.fq and <base>_2P.fq where <base> is:\n $inputs->{prefix}\n";
 	} else {
 		open(RD1, ">$inputs->{prefix}.fq") || die;
 		for(my $i = 0; $i < scalar(@readlens); $i++) {

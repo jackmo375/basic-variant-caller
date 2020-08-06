@@ -22,7 +22,7 @@ workflow() {
 
 	declare -A inputs=( ["input_json"]=${argv[0]} ["log_prefix"]=${argv[1]})
 
-	custom_call check_input_json "checking input json file was provided..."
+	custom_call check_input_json "checking a test suite input json file was provided..."
 
 	custom_call initialize_inputs_hash "initializing input parameter values..."
 

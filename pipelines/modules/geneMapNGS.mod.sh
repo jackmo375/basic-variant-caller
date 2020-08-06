@@ -57,6 +57,7 @@ initialize_inputs_hash() {
 	inputs["trim_adap"]=NULL
 	inputs["trim_leadx"]=0
 	inputs["trim_trailx"]=0
+	inputs["trim_av_qual_min"]=0
 	inputs["ref"]=NULL
 	inputs["blist"]=NULL
 	inputs["glist"]=NULL
@@ -77,6 +78,7 @@ initialize_inputs_hash() {
 	value_from_json ${inputs["input_json"]} '.trim_minlen' inputs["trim_minlen"]
 	value_from_json ${inputs["input_json"]} '.trim_leadx'  inputs["trim_leadx"]
 	value_from_json ${inputs["input_json"]} '.trim_trailx' inputs["trim_trailx"]
+	value_from_json ${inputs["input_json"]} '.trim_av_qual_min' inputs["trim_av_qual_min"]
 	value_from_json ${inputs["input_json"]} '.ref_base'	   inputs["ref_base"] && inputs["ref"]=${ref_dir}/${inputs["ref_base"]}
 	value_from_json ${inputs["input_json"]} '.blist' 	   inputs["blist"]
 	value_from_json ${inputs["input_json"]} '.glist' 	   inputs["glist"]
@@ -137,35 +139,27 @@ initialize_inputs_hash() {
 #
 function fq() {
 	local \
-		tmp_prefix=${tmp_dir}/$(random_id)_ \
 		option_string
-
-	prep_fq $tmp_prefix || return 1
 
 	option_string="\
 		-t ${inputs["threads"]} \
-		{2} \
-		$(if [ -n {3} ]; then echo {3}; fi) \
-		-o ${fqc_dir}/"
+		-o ${fqc_dir}/ \
+		${rds_dir}/{1} ${rds_dir}/{2}"
 
-	log_file_sting="${inputs["log_prefix"]}${inputs["cohort_id"]}.{1}.log"
+	log_file_string="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
 
 	printf "  checking fastq quality with FASTQC..."
 	run_in_parallel \
 		$fastqc \
-		${tmp_prefix}fastq.input.txt \
+		${inputs["meta"]} \
 		"${option_string}" \
-		${inputs["threads"]} \
 		"${inputs["threads"]}" \
-		"${log_file_sting}" \
+		"${log_file_string}" \
 		|| { echo "...failed!"; return 1; } \
 		&& { echo "...done."; return 0; }
-
-	# remove all temporary files
-	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
 }
 
-#  tim(), ptrim()
+#  tim()
 #
 #	*clips unwanted reads in fastq files with trimmomatic*
 #	inputs:
@@ -181,31 +175,26 @@ function trim() {
 		tmp_prefix=${tmp_dir}/$(random_id)_ \
 		option_string
 
-	prep_trim $tmp_prefix || return 1
-
-	option_string="PE \
-		-phred33 {} \
-		$(if [[ ${inputs["trim_adap"]} != NULL ]]; then check_adapter; fi) \
+	option_string="-jar ${trimmomatic} PE \
+		-threads ${inputs["threads"]} \
+		-basein ${rds_dir}/${inputs["cohort_id"]}.{3}.raw_1P.fq \
+		-baseout ${rds_dir}/${inputs["cohort_id"]}.{3}.trimmed.fq \
 		LEADING:${inputs["trim_leadx"]} \
 		TRAILING:${inputs["trim_trailx"]} \
-		SLIDINGWINDOW:4:15 \
-		MINLEN:${inputs["trim_minlen"]} \
-		-threads ${inputs["threads"]}"
+		SLIDINGWINDOW:5:${inputs["trim_av_qual_min"]} \
+		MINLEN:${inputs["trim_minlen"]}"
 
-	log_file_sting="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
+	log_file_string="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
 
 	printf "  trimming reads with trimmomatic..."
 	run_in_parallel \
-		"java -jar ${trimmomatic}" \
-		"${tmp_prefix}trim.input.txt" \
+		"java" \
+		"${inputs["meta"]}" \
 		"${option_string}" \
 		"${inputs["threads"]}" \
-		"${log_file_sting}" \
-		|| { echo "  ...failed!"; return 1; } \
-		&& { echo "  ...done."; return 0; }	
-	
-	# remove temporary files
-	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
+		"${log_file_string}" \
+		|| { echo "...failed!"; return 1; } \
+		&& { echo "...done."; }	
 }
 
 #  bmap(), pbmap()
@@ -231,8 +220,12 @@ function trim() {
 #			saved as compressed bam files
 #
 function bmap() {
+	local \
+		tmp_prefix=${tmp_dir}/$(random_id)_
 
-	_aligning_reads_to_reference || return 1
+	prep_readslist "${tmp_prefix}reads.list" 'trimmed' || return 1
+
+	_aligning_reads_to_reference "${tmp_prefix}reads.list" || return 1
 
 	_converting_sam_to_bam || return 1
 
@@ -264,10 +257,14 @@ function bmap() {
 #		+ [gmap()]  ${bam_dir}/<sample_id>.merged.bam (mapped bam files for each sample)
 #
 function gmap() {
+	local \
+		tmp_prefix=${tmp_dir}/$(random_id)_
 
-	_converting_fastq_to_sam || return 1
+	prep_readslist "${tmp_prefix}reads.list" 'trimmed' || return 1
 
-	_aligning_reads_to_reference || return 1
+	_converting_fastq_to_sam "${tmp_prefix}reads.list" || return 1
+
+	_aligning_reads_to_reference "${tmp_prefix}reads.list" || return 1
 
 	_converting_sam_to_bam || return 1
 
@@ -283,53 +280,55 @@ function gmap() {
 
 _converting_fastq_to_sam() {
 	local \
+		readslist=$1 \
 		option_string \
 		status=0
 
 	option_string="FastqToSam \
-		-F1 ${rds_dir}/{1} \
-		-F2 ${rds_dir}/{2} \
-		-SM {3} \
+		-F1 ${rds_dir}/{2} \
+		-F2 ${rds_dir}/{3} \
+		-SM {1} \
 		-PL {4} \
-		-RG {3} \
-		-O ${bam_dir}/{3}.unmapped.bam"
+		-RG {1} \
+		-O ${bam_dir}/${inputs["cohort_id"]}.{1}.unmapped.bam"
 
-	log_file_sting="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
+	log_file_string="${inputs["log_prefix"]}${inputs["cohort_id"]}.{1}.log"
 
 	printf "  converting fastq files to unmapped bam..."
 	run_in_parallel \
 		"$gatk" \
-		"${inputs["meta"]}" \
+		"${readslist}" \
 		"${option_string}" \
 		"${inputs["threads"]}" \
-		"${log_file_sting}" \
+		"${log_file_string}" \
 		|| { echo "...failed!"; return 1; } \
-		&& { echo "...done."; return 0; }
+		&& { echo "...done."; }
 
 	return $status
 }
 
 _aligning_reads_to_reference() {
 	local \
+		readslist=$1 \
 		option_string \
 		status=0
 
 	option_string="mem \
 		-t ${inputs['threads']} \
-		${inputs['ref']} ${rds_dir}/{1} ${rds_dir}/{2} \
-		-o ${sam_dir}/{3}.sam"
+		${inputs['ref']} ${rds_dir}/{2} ${rds_dir}/{3} \
+		-o ${sam_dir}/${inputs["cohort_id"]}.{1}.sam"
 
-	log_file_sting="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
+	log_file_string="${inputs["log_prefix"]}${inputs["cohort_id"]}.{1}.log"
 
 	printf "  aligning reads to reference with bwa..."
 	run_in_parallel \
 		"$bwa" \
-		"${inputs['meta']}" \
+		"${readslist}" \
 		"${option_string}" \
 		"${inputs["threads"]}" \
-		"${log_file_sting}" \
+		"${log_file_string}" \
 		|| { echo "...failed!"; return 1; } \
-		&& { echo "...done."; return 0; }
+		&& { echo "...done."; }
 
 	return $status
 }
@@ -340,9 +339,9 @@ _converting_sam_to_bam() {
 		status=0
 
 	option_string="view \
-		-h ${sam_dir}/{3}.sam \
+		-h ${sam_dir}/${inputs["cohort_id"]}.{3}.sam \
 		-O BAM \
-		-o ${bam_dir}/{3}.bam"
+		-o ${bam_dir}/${inputs["cohort_id"]}.{3}.bam"
 
 	log_file_sting="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
 
@@ -368,8 +367,8 @@ _sorting_bam_files() {
 		-O BAM \
 		--reference ${inputs["ref"]} \
 		-@ ${inputs["threads"]} \
-		-o ${bam_dir}/{3}.sorted.bam \
-		${bam_dir}/{3}.bam"
+		-o ${bam_dir}/${inputs["cohort_id"]}.{3}.sorted.bam \
+		${bam_dir}/${inputs["cohort_id"]}.{3}.bam"
 
 	log_file_sting="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
 
@@ -393,9 +392,9 @@ _merge_bam_alignments() {
 
 	option_string="MergeBamAlignment \
 		-R ${inputs["ref"]} \
-		-UNMAPPED ${bam_dir}/{3}.unmapped.bam \
-		-ALIGNED ${bam_dir}/{3}.sorted.bam \
-		-O ${bam_dir}/{3}.merged.bam"
+		-UNMAPPED ${bam_dir}/${inputs["cohort_id"]}.{3}.unmapped.bam \
+		-ALIGNED ${bam_dir}/${inputs["cohort_id"]}.{3}.sorted.bam \
+		-O ${bam_dir}/${inputs["cohort_id"]}.{3}.merged.bam"
 
 	log_file_sting="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
 
@@ -421,14 +420,14 @@ _add_read_group_info() {
 		status=0
 
 	option_string="AddOrReplaceReadGroups \
-		-I ${bam_dir}/{3}.sorted.bam \
-		-O ${bam_dir}/{3}.merged.bam \
+		-I ${bam_dir}/${inputs["cohort_id"]}.{3}.sorted.bam \
+		-O ${bam_dir}/${inputs["cohort_id"]}.{3}.merged.bam \
 		-SM {3} \
 		-PL {4} \
 		-PU {3} \
 		-LB {3}"
 
-	log_file_sting="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
+	log_file_string="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
 
 	printf "  adding read group information to bam files..."
 	run_in_parallel \
@@ -436,9 +435,9 @@ _add_read_group_info() {
 		"${inputs["meta"]}" \
 		"${option_string}" \
 		"${inputs["threads"]}" \
-		"${log_file_sting}" \
+		"${log_file_string}" \
 		|| { echo "...failed!"; return 1; } \
-		&& { echo "...done."; return 0; }
+		&& { echo "...done."; }
 
 	return $status
 
@@ -463,11 +462,11 @@ _mark_duplicates() {
 	done < ${inputs["meta"]}
 
 	option_string="MarkDuplicates \
-		-I ${bam_dir}/{3}.${input_bam_stage}.bam \
-		-O ${bam_dir}/{3}.marked.bam \
-		-M ${bam_dir}/{3}.marked_dup_metrics.txt"
+		-I ${bam_dir}/${inputs["cohort_id"]}.{3}.${input_bam_stage}.bam \
+		-O ${bam_dir}/${inputs["cohort_id"]}.{3}.marked.bam \
+		-M ${bam_dir}/${inputs["cohort_id"]}.{3}.marked_dup_metrics.txt"
 
-	log_file_sting="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
+	log_file_string="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
 
 	printf "  marking duplicates..."
 	run_in_parallel \
@@ -475,9 +474,9 @@ _mark_duplicates() {
 		"${inputs["meta"]}" \
 		"${option_string}" \
 		"${inputs["threads"]}" \
-		"${log_file_sting}" \
+		"${log_file_string}" \
 		|| { echo "...failed!"; return 1; } \
-		&& { echo "...done."; return 0; }
+		&& { echo "...done."; }
 
 	return $status
 }
@@ -488,12 +487,12 @@ _validate_bam_files() {
 		status=0
 
 	option_string="ValidateSamFile \
-		-I ${bam_dir}/{3}.marked.bam \
+		-I ${bam_dir}/${inputs["cohort_id"]}.{3}.marked.bam \
 		-R ${inputs["ref"]} \
 		--TMP_DIR ${tmp_dir}/ \
 		-M SUMMARY"
 
-	log_file_sting="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
+	log_file_string="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
 
 	printf "  validating bam files..."
 	run_in_parallel \
@@ -501,7 +500,7 @@ _validate_bam_files() {
 		"${inputs["meta"]}" \
 		"${option_string}" \
 		"${inputs["threads"]}" \
-		"${log_file_sting}" \
+		"${log_file_string}" \
 		|| { echo "...failed!"; return 1; } \
 		&& { echo "...done."; return 0; }
 
@@ -512,25 +511,106 @@ _validate_bam_files() {
 #  indelreal(), pindelreal()
 #
 #	* Indel Realignment 
-#	* (THis will not be run if GATK is used since HaplotypeCaller 
+#	* (This will not be run if GATK v4 is used since HaplotypeCaller 
 #	* essentially does local rearrangements).
-#	* THIS FUNCTION DOES NOT YET WORK IN THE NEW CONTEXT
 #
 function indelreal() {
-       check_ref; check_bamlist
-       #--- Indel realignment (This requires GATKv3.x. Point to your installation of it in 'gatk3_esoh' above)
-       ###  According to GATK Best Practices, this step is not necessary in the new pipeline, as HaplotypeCaller does a good job  ###
-       #awk '{print $1,$2,$3,$4}' ${meta} > metadat.txt
+	local \
+		tmp_prefix=${tmp_dir}/$(random_id)_
+
+	prep_bamlist $tmp_prefix 'marked' || return 1
+
+	_create_realigner_targets ${tmp_prefix}bam.list || return 1
+
+	_realign_indels || return 1
+
+	prep_bamlist $tmp_prefix 'realigned' || return 1
+
+	_index_bam_files ${tmp_prefix}bam.list || return 1
+
+	return 0
+
        id="bam.list"
        n=$((50/$t))
        mkdir -p realigned
        while read -r line; do
-            gatk -T RealignerTargetCreator -R $ref $(if [[ $ks != NULL ]]; then check_sites; if [ -e "rtc.ks.txt" -a -s "rtc.ks.txt" ]; then cat rtc.ks.txt; fi; fi) -I aligned/${line} -o realigned/${line/.bam/.intervals}
-            gatk -T IndelRealigner -R $ref $(if [[ $ks != NULL ]]; then check_sites; if [ -e "ir.ks.txt" -a -s "ir.ks.txt" ]; then cat ir.ks.txt; fi; fi) -I aligned/${line} -targetIntervals realigned/${line/.bam/.intervals} -o realigned/${line/.bam/.realigned.bam}
-            samtools index -b aligned/${line/.bam/.realigned.bam}
+            $gatk \
+            	-T RealignerTargetCreator \
+            	-R $ref $(if [[ $ks != NULL ]]; then check_sites; if [ -e "rtc.ks.txt" -a -s "rtc.ks.txt" ]; then cat rtc.ks.txt; fi; fi) \
+            	-I aligned/${line} \
+            	-o realigned/${line/.bam/.intervals}
+            $gatk \
+            	-T IndelRealigner \
+            	-R $ref $(if [[ $ks != NULL ]]; then check_sites; if [ -e "ir.ks.txt" -a -s "ir.ks.txt" ]; then cat ir.ks.txt; fi; fi) \
+            	-I aligned/${line} \
+            	-targetIntervals realigned/${line/.bam/.intervals} \
+            	-o realigned/${line/.bam/.realigned.bam}
+            $samtools index \
+            	-b aligned/${line/.bam/.realigned.bam}
        done < ${id}
        if [ -e "ir.ks.txt" -o -e "rtc.ks.txt" ]; then rm ir.ks.txt || rm rtc.ks.txt; fi
 }
+
+_create_realigner_targets() {
+	local \
+		bamlist=$1 \
+		option_string \
+		status=0
+
+	java -jar $gatk3 -T RealignerTargetCreator
+	exit 0
+
+	option_string="-jar ${gatk3} \
+		-T RealignerTargetCreator \
+		-R ${inputs["ref"]} \
+		-I ${bam_dir}/{2} \
+		-o ${bam_dir}/{2}.intervals"
+
+	log_file_string="${inputs["log_prefix"]}${inputs["cohort_id"]}.{1}.log"
+
+	printf "  creating realigner targets..."
+	run_in_parallel \
+		"java" \
+		"$bamlist" \
+		"${option_string}" \
+		"${inputs["threads"]}" \
+		"${log_file_string}" \
+		|| { echo "...failed!"; return 1; } \
+		&& { echo "...done."; }
+
+	return $status
+}
+
+_realign_indels() {
+	local \
+		bamlist=$1 \
+		option_string \
+		status=0
+
+	option_string="-jar $gatk3 \
+		-T IndelRealigner \
+		-R ${inputs["ref"]} \
+		-I ${bam_dir}/{2} \
+		-targetIntervals ${bam_dir}/{2}.intervals \
+		-o ${bam_dir}/{3}.realigned.bam"
+
+	log_file_string="${inputs["log_prefix"]}${inputs["cohort_id"]}.{1}.log"
+
+	printf "  realigning indels..."
+	run_in_parallel \
+		"java" \
+		"$bamlist" \
+		"${option_string}" \
+		"${inputs["threads"]}" \
+		"${log_file_string}" \
+		|| { echo "...failed!"; status=1; } \
+		&& { echo "...done."; }
+
+	return $status
+}
+
+
+
 
 function pindelreal() {
        check_ref; check_bamlist
@@ -623,17 +703,15 @@ function pbqsr() {
 #
 function varcall() {
 	local \
-		tmp_prefix=${tmp_dir}/$(random_id)_ \
-		input_bam_stage='marked' \
-		input_gvcf_stage='raw'
+		tmp_prefix=${tmp_dir}/$(random_id)_ 
 
-	prep_bamlist $tmp_prefix $input_bam_stage || return 1
+	prep_bamlist $tmp_prefix 'marked' || return 1
 
 	_index_bam_files ${tmp_prefix}bam.list || return 1
 
 	_call_sample_variants ${tmp_prefix}bam.list || return 1
 
-	prep_gvcflist $tmp_prefix $input_gvcf_stage || return 1
+	prep_gvcflist $tmp_prefix 'raw' || return 1
 
 	_combine_sample_gvcfs ${tmp_prefix}gvcf.list || return 1
 
@@ -783,7 +861,7 @@ function vqsr() {
 function bcfcall() {
 	local \
 		tmp_prefix=${tmp_dir}/$(random_id)_ \
-		input_bam_stage='marked'
+		input_bam_stage='realigned'
 
 	prep_bamlist $tmp_prefix $input_bam_stage || return 1
 
@@ -1028,6 +1106,23 @@ function prep_map() {
 	else
 		echo -e "\n\e[38;5;1mERROR\e[0m: Please check that there are fastq files in the path...\n"
 	fi
+}
+
+function prep_readslist() {
+	local \
+		readslist=$1 \
+		input_reads_stage=$2 \
+
+	> ${readslist}
+	while read -r line; do
+		[[ "$line" == "#"* ]] && continue
+		line_array=( $line )
+		sample_id=${line_array[2]}
+		reads_prefix="${inputs[cohort_id]}.${sample_id}.${input_reads_stage}"
+		platform=${line_array[3]}
+
+		echo -e "${sample_id}\t${reads_prefix}_1P.fq\t${reads_prefix}_2P.fq\t${platform}" >> $readslist
+	done < ${inputs["meta"]}
 }
 
 #  prep_bamlist
