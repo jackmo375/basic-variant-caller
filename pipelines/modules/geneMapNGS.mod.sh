@@ -100,8 +100,8 @@ initialize_inputs_hash() {
 	## still need to write checks for the other input parameters...
 	[[ $status == 0 ]] && echo '...done'
 
-	# 4. set up output logging 
-	set_up_log_directory || { echo 'seting up log directory failed'; status=1; }
+	# 4. set up output logging and temporary files
+	set_up_tmps_and_logs || { echo 'seting up temp and log directory failed'; status=1; }
 
 	return $status
 }
@@ -139,7 +139,8 @@ initialize_inputs_hash() {
 #
 function fq() {
 	local \
-		option_string
+		option_string \
+		log_file_string
 
 	option_string="\
 		-t ${inputs["threads"]} \
@@ -172,8 +173,8 @@ function fq() {
 #
 function trim() {
 	local \
-		tmp_prefix=${tmp_dir}/$(random_id)_ \
-		option_string
+		option_string \
+		log_file_string
 
 	option_string="-jar ${trimmomatic} PE \
 		-threads ${inputs["threads"]} \
@@ -220,12 +221,10 @@ function trim() {
 #			saved as compressed bam files
 #
 function bmap() {
-	local \
-		tmp_prefix=${tmp_dir}/$(random_id)_
+	
+	prep_reads_list 'trimmed' || return 1
 
-	prep_readslist "${tmp_prefix}reads.list" 'trimmed' || return 1
-
-	_aligning_reads_to_reference "${tmp_prefix}reads.list" || return 1
+	_aligning_reads_to_reference || return 1
 
 	_converting_sam_to_bam || return 1
 
@@ -257,14 +256,12 @@ function bmap() {
 #		+ [gmap()]  ${bam_dir}/<sample_id>.merged.bam (mapped bam files for each sample)
 #
 function gmap() {
-	local \
-		tmp_prefix=${tmp_dir}/$(random_id)_
 
-	prep_readslist "${tmp_prefix}reads.list" 'trimmed' || return 1
+	prep_reads_list 'trimmed' || return 1
 
-	_converting_fastq_to_sam "${tmp_prefix}reads.list" || return 1
+	_converting_fastq_to_sam || return 1
 
-	_aligning_reads_to_reference "${tmp_prefix}reads.list" || return 1
+	_aligning_reads_to_reference || return 1
 
 	_converting_sam_to_bam || return 1
 
@@ -280,8 +277,8 @@ function gmap() {
 
 _converting_fastq_to_sam() {
 	local \
-		readslist=$1 \
 		option_string \
+		log_file_string \
 		status=0
 
 	option_string="FastqToSam \
@@ -297,7 +294,7 @@ _converting_fastq_to_sam() {
 	printf "  converting fastq files to unmapped bam..."
 	run_in_parallel \
 		"$gatk" \
-		"${readslist}" \
+		"${inputs['tmp_prefix']}reads.list" \
 		"${option_string}" \
 		"${inputs["threads"]}" \
 		"${log_file_string}" \
@@ -309,8 +306,8 @@ _converting_fastq_to_sam() {
 
 _aligning_reads_to_reference() {
 	local \
-		readslist=$1 \
 		option_string \
+		log_file_string \
 		status=0
 
 	option_string="mem \
@@ -323,7 +320,7 @@ _aligning_reads_to_reference() {
 	printf "  aligning reads to reference with bwa..."
 	run_in_parallel \
 		"$bwa" \
-		"${readslist}" \
+		"${inputs['tmp_prefix']}reads.list" \
 		"${option_string}" \
 		"${inputs["threads"]}" \
 		"${log_file_string}" \
@@ -506,17 +503,16 @@ _validate_bam_files() {
 #
 function indelreal() {
 	local \
-		tmp_prefix=${tmp_dir}/$(random_id)_
 
-	prep_bamlist $tmp_prefix 'marked' || return 1
+	prep_bam_list ${inputs['tmp_prefix']} 'marked' || return 1
 
-	_create_realigner_targets ${tmp_prefix}bam.list || return 1
+	_create_realigner_targets ${inputs['tmp_prefix']}bam.list || return 1
 
 	_realign_indels || return 1
 
-	prep_bamlist $tmp_prefix 'realigned' || return 1
+	prep_bam_list ${inputs['tmp_prefix']} 'realigned' || return 1
 
-	_index_bam_files ${tmp_prefix}bam.list || return 1
+	_index_bam_files ${inputs['tmp_prefix']}bam.list || return 1
 
 	return 0
 
@@ -630,7 +626,6 @@ function pindelreal() {
 #		+ A GATK Report file with many tables
 function bqsr() {
 
-	tmp_prefix=${tmp_dir}/$(random_id)_
 	check_ref || return 1
 	check_gatk_dict || return 1
 	check_bamlist $tmp_prefix || return 1
@@ -692,29 +687,23 @@ function pbqsr() {
 #	outputs:
 #
 function varcall() {
-	local \
-		tmp_prefix=${tmp_dir}/$(random_id)_ 
 
-	prep_bamlist $tmp_prefix 'marked' || return 1
+	prep_bam_list 'marked' || return 1
 
-	_index_bam_files ${tmp_prefix}bam.list || return 1
+	_index_bam_files || return 1
 
-	_call_sample_variants ${tmp_prefix}bam.list || return 1
+	_call_sample_variants || return 1
 
-	prep_gvcflist $tmp_prefix 'raw' || return 1
+	prep_gvcf_list 'raw' || return 1
 
-	_combine_sample_gvcfs ${tmp_prefix}gvcf.list || return 1
+	_combine_sample_gvcfs  || return 1
 
 	_genotype_combined_gvcf || return 1
-
-	# remove all temporary files from this call
-	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
 
 }
 
 _index_bam_files() {
 	local \
-		bamlist=$1 \
 		option_string \
 		status=0
 
@@ -723,73 +712,63 @@ _index_bam_files() {
 		-@ ${inputs["threads"]} \
 		${bam_dir}/{2}"
 
-	log_file_sting="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
+	log_file_string="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
 
 	printf "  indexing bam files..."
 	run_in_parallel \
 		"$samtools" \
-		"$bamlist" \
+		"${inputs['tmp_prefix']}bam.list" \
 		"${option_string}" \
 		"${inputs["threads"]}" \
-		"${log_file_sting}" \
+		"${log_file_string}" \
 		|| { echo "...failed!"; return 1; } \
-		&& { echo "...done."; return 0; }
+		&& { echo "...done."; }
 
 	return $status
 }
 
 _call_sample_variants() {
 	local \
-		bamlist=$1 \
 		option_string \
-		status=0
+		log_file_string
 
 	option_string="HaplotypeCaller \
 		-R ${inputs["ref"]} \
 		-I ${bam_dir}/{2} \
-		-O ${vcf_dir}/{1}.raw.g.vcf \
+		-O ${vcf_dir}/${inputs['cohort_id']}.{1}.raw.g.vcf \
 		$(if [[ ${inputs["ped"]} != NULL ]]; then echo -ped ${inputs["ped"]}; fi) \
 		$(if [[ ${inputs["dbsnp"]} != NULL ]]; then echo --dbsnp ${inputs["dbsnp"]}; fi) \
 		--lenient true \
 		-ERC GVCF"
 
-	log_file_sting="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
+	log_file_string="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
 
 	printf "  calling sample variants with gatk HaplotypeCaller..."
 	run_in_parallel \
 		"$gatk" \
-		"$bamlist" \
+		"${inputs['tmp_prefix']}bam.list" \
 		"${option_string}" \
 		"${inputs["threads"]}" \
-		"${log_file_sting}" \
+		"${log_file_string}" \
 		|| { echo "...failed!"; return 1; } \
 		&& { echo "...done."; return 0; }
-
-	return $status
 }
 
 _combine_sample_gvcfs() {
-	local \
-		gvcf_list=$1 \
-		status=0
 
 	printf "  combining sample gvcf files..."
 	$gatk CombineGVCFs \
 		-R ${inputs["ref"]} \
-		--arguments_file $gvcf_list \
+		--arguments_file ${inputs['tmp_prefix']}gvcf.list \
 		$(if [[ ${inputs["dbsnp"]} != NULL ]]; then echo --dbsnp ${inputs["dbsnp"]}; fi) \
 		$(if [[ ${inputs["ped"]} != NULL ]]; then echo -ped {inputs["ped"]}; fi) \
 		-O ${vcf_dir}/${inputs["cohort_id"]}.combined.g.vcf \
 		&>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
 		|| { echo "...failed!"; return 1; } \
 		&& { echo "...done."; return 0; }
-
-	return $status
 }
 
 _genotype_combined_gvcf() {
-	local \
-		status=0
 
 	printf "  genotyping cohort's combined gvcf file..."
 	$gatk GenotypeGVCFs \
@@ -802,7 +781,6 @@ _genotype_combined_gvcf() {
 		|| { echo "...failed!"; return 1; } \
 		&& { echo "...done."; return 0; }
 
-	return $status
 }
 
 
@@ -849,13 +827,26 @@ function vqsr() {
 #		+ a gvcf file containing variants jointly called across the cohort
 #
 function bcfcall() {
-	local \
-		tmp_prefix=${tmp_dir}/$(random_id)_ \
-		input_bam_stage='marked'
 
-	prep_bamlist $tmp_prefix $input_bam_stage || return 1
+	prep_bam_list 'marked' || return 1
 
-	cat ${tmp_prefix}bam.list | awk -v d=${bam_dir}/ '{print d$2}' > ${tmp_prefix}bam.inputs
+	cat ${inputs['tmp_prefix']}bam.list \
+		| awk -v d=${bam_dir}/ '{print d$2}' \
+		> ${inputs['tmp_prefix']}bam.inputs
+
+	_pile_up_sample_gvcfs || return 1
+
+	_index_gvcf_file 'piledup' || return 1
+
+	_joint_call_variants_bcftools || return 1
+
+	_index_gvcf_file 'genotyped' || return 1
+
+	_unzip_gvcf_file 'genotyped' || return 1
+
+}
+
+_pile_up_sample_gvcfs() {
 
 	printf "  piling up sample gvcf files before joint calling..."
 	$bcftools mpileup \
@@ -863,48 +854,47 @@ function bcfcall() {
 		--thread ${inputs["threads"]} \
 		-f ${inputs["ref"]} \
 		-Oz \
-		-o ${vcf_dir}/${inputs["cohort_id"]}.piledup.vcf.gz \
-		-b ${tmp_prefix}bam.inputs \
+		-o ${vcf_dir}/${inputs["cohort_id"]}.piledup.g.vcf.gz \
+		-b ${inputs['tmp_prefix']}bam.inputs \
 		&>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
 		|| { echo "...failed!"; return 1; } \
-		&& { echo "...done."; }
+		&& { echo "...done."; return 0; }
+}
+
+_index_gvcf_file() {
+	local input_gvcf_stage=$1
 
 	printf "  indexing cohort piledup gvcf file..."
-	$bcftools index -f -t ${vcf_dir}/${inputs["cohort_id"]}.piledup.vcf.gz \
+	$bcftools index -f -t ${vcf_dir}/${inputs["cohort_id"]}.${input_gvcf_stage}.g.vcf.gz \
 		&>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
 		|| { echo "...failed!"; return 1; } \
-		&& { echo "...done."; }
+		&& { echo "...done."; return 0; }
+}
 
-	printf " joint-calling variants for cohort with bcftools..."
+_joint_call_variants_bcftools() {
+
+	printf "  joint-calling variants for cohort with bcftools..."
 	$bcftools call \
 		-mv \
 		--threads ${inputs["threads"]} \
 		-Oz \
 		-o ${vcf_dir}/${inputs["cohort_id"]}.genotyped.g.vcf.gz \
-		${vcf_dir}/${inputs["cohort_id"]}.piledup.vcf.gz \
+		${vcf_dir}/${inputs["cohort_id"]}.piledup.g.vcf.gz \
 		&>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
 		|| { echo "...failed!"; return 1; } \
-		&& { echo "...done."; }
+		&& { echo "...done."; return 0; }
+}
 
-	printf "  indexing the joint-called cohort gvcf file..."
-	$bcftools index -f -t ${vcf_dir}/${inputs["cohort_id"]}.genotyped.g.vcf.gz \
-		&>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
-		|| { echo "...failed!"; return 1; } \
-		&& { echo "...done."; }
+_unzip_gvcf_file() {
 
-	# unzip the final gvcf file to inspect
 	printf "  unzipping the joint-called cohort gvcf file..."
 	$bcftools view \
 		-o ${vcf_dir}/${inputs["cohort_id"]}.genotyped.g.vcf \
 		${vcf_dir}/${inputs["cohort_id"]}.genotyped.g.vcf.gz \
 		&>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
 		|| { echo "...failed!"; return 1; } \
-		&& { echo "...done."; }
-
-	# remove all temporary files
-	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
+		&& { echo "...done."; return 0; }
 }
-
 
 #
 #  2. check functions
@@ -1025,8 +1015,8 @@ fi
 #	+ prep_fq()
 #	+ prep_trim()
 #	+ prep_map()
-#	+ prep_bamlist()
-#	+ prep_gvcflist()
+#	+ prep_bam_list()
+#	+ prep_gvcf_list()
 #
 
 #  prep_fq
@@ -1035,52 +1025,49 @@ fi
 #
 function prep_fq() {
 	local \
-		tmp_prefix=$1 \
 		line
 
 	#--- Make input files from forward/reverse runs or SAM/BAM files
-	> ${tmp_prefix}fwd.txt
+	> ${inputs['tmp_prefix']}fwd.txt
 	while IFS= read -r line; do
 		if [[ ! $line == "#"* ]]; then
 			line_array=( $line )
-			echo -e "${line_array[3]}\t${line_array[0]}" >> ${tmp_prefix}fwd.txt
+			echo -e "${line_array[3]}\t${line_array[0]}" >> ${inputs['tmp_prefix']}fwd.txt
 		fi
 	done < ${inputs["meta"]}
 
-	> ${tmp_prefix}rev.txt
+	> ${inputs['tmp_prefix']}rev.txt
 	while IFS= read -r line; do
 		if [[ ! $line == "#"* ]]; then
 			line_array=( $line )
-			echo -e "${line_array[3]}\t${line_array[1]}" >> ${tmp_prefix}rev.txt
+			echo -e "${line_array[3]}\t${line_array[1]}" >> ${inputs['tmp_prefix']}rev.txt
 		fi
 	done < ${inputs["meta"]}
 
-	if [[ ! -s "${tmp_prefix}rev.txt" ]]; then
-		cp ${tmp_prefix}fwd.txt ${tmp_prefix}forward_reverse.txt
-		awk -v d="${rds_dir}/" '{print $1 d$2}' ${tmp_prefix}forward_reverse.txt > ${tmp_prefix}fastq.input.txt
+	if [[ ! -s "${inputs['tmp_prefix']}rev.txt" ]]; then
+		cp ${inputs['tmp_prefix']}fwd.txt ${inputs['tmp_prefix']}forward_reverse.txt
+		awk -v d="${rds_dir}/" '{print $1 d$2}' ${inputs['tmp_prefix']}forward_reverse.txt > ${inputs['tmp_prefix']}fastq.input.txt
 	else
-		paste ${tmp_prefix}fwd.txt ${tmp_prefix}rev.txt | awk '{print $1,$2}' > ${tmp_prefix}forward_reverse.txt
-		awk -v d="${rds_dir}/" '{print $1 d$2,d$3}' ${tmp_prefix}forward_reverse.txt > ${tmp_prefix}fastq.input.txt
+		paste ${inputs['tmp_prefix']}fwd.txt ${inputs['tmp_prefix']}rev.txt | awk '{print $1,$2}' > ${inputs['tmp_prefix']}forward_reverse.txt
+		awk -v d="${rds_dir}/" '{print $1 d$2,d$3}' ${inputs['tmp_prefix']}forward_reverse.txt > ${inputs['tmp_prefix']}fastq.input.txt
 	fi
-	rm ${tmp_prefix}fwd.txt ${tmp_prefix}rev.txt
+	rm ${inputs['tmp_prefix']}fwd.txt ${inputs['tmp_prefix']}rev.txt
 
 }
 
 function prep_trim() {
-	local \
-		tmp_prefix=$1
     
-    prep_fq $tmp_prefix || return 1
+    prep_fq ${inputs['tmp_prefix']} || return 1
 
     #--- On checking for fastq files above, we checked for SAM/BAM as well. If the function picked SAM/BAM, we definitely wanna spill errors since we can't trim SAM/BAM here
-    for i in $(awk '{print $1}' ${tmp_prefix}forward_reverse.txt | head -1); do
+    for i in $(awk '{print $1}' ${inputs['tmp_prefix']}forward_reverse.txt | head -1); do
         if [[ ( ${i} == *.sam ) || ( ${i} == *.sam.gz ) || ( "${i}" == *.bam ) ]]; then
            echo -e "\n\e[38;5;1mERROR\e[0m: No fastq/SAM/BAM file found in the specified location: '${rds_dir}'\nPlease specify path to Fastq/SAM/BAM files using -p or --path\n" 1>&2;
            return 1;
-           rm ${tmp_prefix}forward_reverse.txt ${tmp_prefix}fastq.input.txt
+           rm ${inputs['tmp_prefix']}forward_reverse.txt ${inputs['tmp_prefix']}fastq.input.txt
         fi
     done
-    awk -v d="${rds_dir}/" '{print d$1,d$2, d$1".paired_fp.fq.gz", d$1".unpaired_fu.fq.gz", d$2".paired_rp.fq.gz", d$2".unpaired_ru.fq.gz"}' ${tmp_prefix}forward_reverse.txt > ${tmp_prefix}trim.input.txt
+    awk -v d="${rds_dir}/" '{print d$1,d$2, d$1".paired_fp.fq.gz", d$1".unpaired_fu.fq.gz", d$2".paired_rp.fq.gz", d$2".unpaired_ru.fq.gz"}' ${inputs['tmp_prefix']}forward_reverse.txt > ${inputs['tmp_prefix']}trim.input.txt
 	#rm forward_reverse.txt fastq.input.txt;
 }
 
@@ -1098,12 +1085,11 @@ function prep_map() {
 	fi
 }
 
-function prep_readslist() {
+function prep_reads_list() {
 	local \
-		readslist=$1 \
-		input_reads_stage=$2 \
+		input_reads_stage=$1
 
-	> ${readslist}
+	> ${inputs['tmp_prefix']}reads.list
 	while read -r line; do
 		[[ "$line" == "#"* ]] && continue
 		line_array=( $line )
@@ -1111,11 +1097,11 @@ function prep_readslist() {
 		reads_prefix="${inputs[cohort_id]}.${sample_id}.${input_reads_stage}"
 		platform=${line_array[3]}
 
-		echo -e "${sample_id}\t${reads_prefix}_1P.fq\t${reads_prefix}_2P.fq\t${platform}" >> $readslist
+		echo -e "${sample_id}\t${reads_prefix}_1P.fq\t${reads_prefix}_2P.fq\t${platform}" >> ${inputs['tmp_prefix']}reads.list
 	done < ${inputs["meta"]}
 }
 
-#  prep_bamlist
+#  prep_bam_list
 #
 #  Prepare input for BQSR, varcall
 #	* check that a list of bam files
@@ -1124,53 +1110,49 @@ function prep_readslist() {
 #	* or create one from the sample list
 #	* via $meta
 # 
-function prep_bamlist() {
+function prep_bam_list() {
 	#  * if the user has specified an input bam list 
 	#  * then use this one, otherwise, create one
 	#  * using the sample IDs in the $inputs["meta"] file.
 	local \
-		tmp_prefix=$1 \
-		input_bam_stage=$2 \
+		input_bam_stage=$1 \
 		samples \
-		i \
-		f
+		i
 
 	if [[ ! ${inputs["blist"]}==NULL ]]; then
-		cat ${inputs["blist"]} > ${tmp_prefix}bam.list 
+		cat ${inputs["blist"]} > ${inputs['tmp_prefix']}bam.list 
 		return 0
 	else
 		samples=$(sed '/^#/d' ${inputs["meta"]} | awk '{print $3}')
 		for i in ${samples[@]}; do
 			echo -e "$i\t${inputs["cohort_id"]}.$i.${input_bam_stage}.bam"
-		done > ${tmp_prefix}bam.list
+		done > ${inputs['tmp_prefix']}bam.list
 	fi
 
-	[[ -s ${tmp_prefix}bam.list ]] || { echo "\n\e[38;5;1mERROR\e[0m: no bam files were found, please check and try again"; return 1; }
+	[[ -s ${inputs['tmp_prefix']}bam.list ]] || { echo "\n\e[38;5;1mERROR\e[0m: no bam files were found, please check and try again"; return 1; }
 
 }
 
-function prep_gvcflist() {
+function prep_gvcf_list() {
 	#  * if the user has specified an input gvcf list 
 	#  * then use this one, otherwise, create one
 	#  * using the sample IDs in the $inputs["meta"] file.
 	local \
-		tmp_prefix=$1 \
-		input_gvcf_stage=$2 \
+		input_gvcf_stage=$1 \
 		samples \
-		i \
-		f
+		i
 
 	if [[ ! ${inputs["glist"]}==NULL ]]; then
 		echo "using user's input gvcf list $blist"
-		cat ${inputs["glist"]} > ${tmp_prefix}gvcf.list 
+		cat ${inputs["glist"]} > ${inputs['tmp_prefix']}gvcf.list 
 		return 0
 	else
 		samples=$(sed '/^#/d' ${inputs["meta"]} | awk '{print $3}')
 		for i in ${samples[@]}; do
-			echo "-V ${vcf_dir}/$i.${input_gvcf_stage}.g.vcf"
-		done > ${tmp_prefix}gvcf.list
+			echo "-V ${vcf_dir}/${inputs['cohort_id']}.$i.${input_gvcf_stage}.g.vcf"
+		done > ${inputs['tmp_prefix']}gvcf.list
 	fi
 
-	[[ -s ${tmp_prefix}gvcf.list ]] || { echo "\n\e[38;5;1mERROR\e[0m: no gvcf files were found, please check and try again"; return 1; }
+	[[ -s ${inputs['tmp_prefix']}gvcf.list ]] || { echo "\n\e[38;5;1mERROR\e[0m: no gvcf files were found, please check and try again"; return 1; }
 
 }

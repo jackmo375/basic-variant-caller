@@ -75,9 +75,6 @@ sub GenerateReads {
 	# load the reference sequence
 	my $ref_string = Simulate::load_reference_sequence($inputs);
 
-	# mutate the reference
-	#Simulate::mutate_reference($inputs, \$ref_string);
-
 	# generate the reads
 	Simulate::generate_reads($inputs, \$ref_string);
 }

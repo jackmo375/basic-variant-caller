@@ -61,7 +61,7 @@ sub initialize_parameters {
 		findel		=> 0.0005, 	# fraction of indels wrt original sequence length
 		nrearr_av	=> 3,		# number of small dna rearrangements (an average value for a distribution)
 
-		output_vcf	=> 'truth.vcf',	# output filename of truth vcf file
+		output_vcf	=> 'truth.g.vcf',	# output filename of truth vcf file
 		cohort_id   => '_'
 	);
 
@@ -79,7 +79,7 @@ sub initialize_parameters {
 		"frag-avg=i"        => \$inputs{frag_av},
 		"frag-sd=i"         => \$inputs{frag_sd},
 		"unpaired"          => sub { $inputs{paired} = 0; },
-		"reads_prefix=s"          => \$inputs{prefix},
+		"reads_prefix=s"    => \$inputs{prefix},
 		"input_json=s" 		=> \$inputs{input_json},
 		"output_vcf=s"		=> \$inputs{output_vcf},
 		"cohort_id=s"		=> \$inputs{cohort_id}

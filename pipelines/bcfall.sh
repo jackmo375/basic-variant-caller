@@ -21,7 +21,7 @@ source ${pip_dir}/modules/geneMapNGS.mod.sh
 workflow() {
 	local argv=("$@")
 
-	declare -A inputs=( ["input_json"]=${argv[0]} ["log_prefix"]=${argv[1]})
+	declare -A inputs=( ["input_json"]=${argv[0]} ["log_prefix"]=${argv[1]} ["tmp_prefix"]=${argv[2]})
 
 	custom_call check_input_json "checking a pipeline input json file was provided..."
 
@@ -34,7 +34,7 @@ workflow() {
 	custom_call bmap "mapping reads to the reference with bwa..."
 
 	custom_call bcfcall "calling variants with bcftools..."
-
+	
 }
 
 #

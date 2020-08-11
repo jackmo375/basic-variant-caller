@@ -15,10 +15,9 @@ source ../includes/utilities.sh
 source ${pip_dir}/modules/checkparams.mod.sh
 
 workflow() { 
-	local \
-		argv=("$@")
+	local argv=("$@")
 
-	declare -A inputs=( ["input_json"]=${argv[0]} ["log_prefix"]=${argv[1]} )
+	declare -A inputs=( ["input_json"]=${argv[0]} ["log_prefix"]=${argv[1]} ['tmp_prefix']=${argv[2]} )
 
 	custom_call check_input_json "checking simulation input json file was provided..."
 
@@ -61,50 +60,40 @@ initialize_inputs_hash() {
 	[[ $status == 0 ]] && echo '...done'
 
 	# 4. set up logging information
-	set_up_log_directory || { echo 'seting up log directory failed'; status=1; }
+	set_up_tmps_and_logs || { echo 'seting up temp and log directory failed'; status=1; }
 
 	return $status
 }
 
 simulate_cohort_reads() {
-	local \
-		tmp_prefix=${tmp_dir}/$(random_id)_ \
-		status=0
+
+	_mutate_reference || return 1
+
+	_generate_reads || return 1
+
+	_sort_gvcf_file 'truth' || return 1
+}
+
+_mutate_reference() {
 
 	printf '  mutating the reference...'
 	$simulate MutateReference \
 		--input_ref ${inputs["ref"]} \
-		--output_ref ${tmp_prefix}${inputs["cohort_id"]}.fa \
+		--output_ref ${inputs['tmp_prefix']}${inputs["cohort_id"]}.fa \
 		--input_json ${inputs["input_json"]} \
-		--output_vcf ${vcf_dir}/${inputs["cohort_id"]}.truth.vcf \
+		--output_vcf ${vcf_dir}/${inputs["cohort_id"]}.truth.g.vcf \
 		&>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
 		|| { echo "...failed!"; return 1; } \
 		&& echo "...done."
-
-	_generate_reads $tmp_prefix || return 1
-
-	printf '  sorting truth gvcf files...'
-	$bcftools sort \
-		${vcf_dir}/${inputs["cohort_id"]}.truth.vcf \
-		-o ${vcf_dir}/${inputs["cohort_id"]}.truth.sorted.vcf \
-		&>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
-		|| { echo "...failed!"; return 1; } \
-		&& { echo "...done."; }
-
-	# remove all temporary files
-	[ ! -z "${tmp_prefix}" ] && rm ${tmp_prefix}*
 }
 
 _generate_reads() {
 	local \
-		tmp_prefix=$1 \
-		sample_ids \
 		s \
 		prefix \
 		sample_log_file \
-		input_file \
-		input_string \
-		status=0
+		option_string \
+		log_file_string
 
 	echo "# sample file for cohort: ${inputs["cohort_id"]}" > ${rds_dir}/${inputs["cohort_id"]}.txt
 	for s in $(seq 1 1 ${inputs["n_samples"]}); do
@@ -118,11 +107,11 @@ _generate_reads() {
 	done
 
 	option_string="GenerateReads \
-		--input_ref ${tmp_prefix}${inputs["cohort_id"]}.fa \
+		--input_ref ${inputs['tmp_prefix']}${inputs["cohort_id"]}.fa \
 		--reads_prefix "${rds_dir}/"${inputs["cohort_id"]}.{3}.raw \
 		--input_json ${inputs["input_json"]}"
 
-	log_file_sting="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
+	log_file_string="${inputs["log_prefix"]}${inputs["cohort_id"]}.{3}.log"
 
 	printf "  simulating reads..."
 	run_in_parallel \
@@ -130,11 +119,21 @@ _generate_reads() {
 		${rds_dir}/${inputs["cohort_id"]}.txt \
 		"${option_string}" \
 		${inputs["threads"]} \
-		"${log_file_sting}" \
-		|| { echo "...failed!"; status=1; } \
+		"${log_file_string}" \
+		|| { echo "...failed!"; return 1; } \
 		&& { echo "...done."; }
+}
 
-	return $status
+_sort_gvcf_file() {
+	local input_gvcf_stage=$1
+
+	printf '  sorting truth gvcf files...'
+	$bcftools sort \
+		${vcf_dir}/${inputs["cohort_id"]}.${input_gvcf_stage}.g.vcf \
+		-o ${vcf_dir}/${inputs["cohort_id"]}.${input_gvcf_stage}.sorted.g.vcf \
+		&>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
+		|| { echo "...failed!"; return 1; } \
+		&& { echo "...done."; }
 }
 
 

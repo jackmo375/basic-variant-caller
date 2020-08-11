@@ -19,7 +19,7 @@ workflow() {
 	local \
 		argv=("$@") \
 	
-	declare -A inputs=( ["input_json"]=${argv[0]} ["log_prefix"]=${argv[1]})
+	declare -A inputs=( ["input_json"]=${argv[0]} ["log_prefix"]=${argv[1]} ['tmp_prefix']=${argv[2]})
 
 	custom_call check_input_json "checking a pipeline input json file was provided..."
 
@@ -32,7 +32,6 @@ workflow() {
 	custom_call gmap "performing Mapping/Alignment with GATKv4 and BWA ..."
 
 	custom_call varcall "calling variants with gatk..."
-
 }
 
 

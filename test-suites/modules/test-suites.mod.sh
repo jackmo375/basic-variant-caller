@@ -62,8 +62,8 @@ initialize_inputs_hash() {
 	## still need to write checks for the other input parameters...
 	[[ $status == 0 ]] && echo '...done'
 
-	# 4. set up logging information
-	set_up_log_directory || { echo 'seting up log directory failed'; status=1; }
+	# 4. set up output logging and temporary files
+	set_up_tmps_and_logs || { echo 'seting up temp and log directory failed'; status=1; }
 
 	return $status
 }
@@ -88,9 +88,9 @@ compare_truth_est_vcf()
 
 	printf "  zipping truth vcf files..."
 	$bcftools view \
-		${vcf_dir}/${inputs["cohort_id"]}.truth.sorted.vcf \
+		${vcf_dir}/${inputs["cohort_id"]}.truth.sorted.g.vcf \
 		-Oz \
-		-o ${vcf_dir}/${inputs["cohort_id"]}.truth.sorted.vcf.gz \
+		-o ${vcf_dir}/${inputs["cohort_id"]}.truth.sorted.g.vcf.gz \
 		&>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
 		|| { echo "...failed!"; return 1; } \
 		&& { echo "...done."; }
@@ -99,7 +99,7 @@ compare_truth_est_vcf()
 	$bcftools index ${vcf_dir}/${inputs["cohort_id"]}.genotyped.g.vcf.gz \
 		&>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
 		|| { echo "...failed!"; return 1; }
-	$bcftools index ${vcf_dir}/${inputs["cohort_id"]}.truth.sorted.vcf.gz \
+	$bcftools index ${vcf_dir}/${inputs["cohort_id"]}.truth.sorted.g.vcf.gz \
 		&>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
 		|| { echo "...failed!"; return 1; } \
 		&& { echo "...done."; }
@@ -107,7 +107,7 @@ compare_truth_est_vcf()
 	printf "  computing the set difference and intersection vcf files..."
 	$bcftools isec \
 		${vcf_dir}/${inputs["cohort_id"]}.genotyped.g.vcf.gz \
-		${vcf_dir}/${inputs["cohort_id"]}.truth.sorted.vcf.gz \
+		${vcf_dir}/${inputs["cohort_id"]}.truth.sorted.g.vcf.gz \
 		-p ${vcf_dir}/${inputs["cohort_id"]}.isec \
 		|| { echo "...failed!"; return 1; } \
 		&& { echo "...done."; }
@@ -128,24 +128,24 @@ jaccard_index() {
 
 	printf '  computing jaccard index...'
 	$gatk CountVariants \
-		-V ${vcf_dir}/${inputs["cohort_id"]}.isec/0000.vcf 1> ${tmp_prefix}${inputs["cohort_id"]}.isec \
+		-V ${vcf_dir}/${inputs["cohort_id"]}.isec/0000.vcf 1> ${inputs['tmp_prefix']}${inputs["cohort_id"]}.isec \
 		2>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
 		|| { echo "...failed!"; return 1; }
 	$gatk CountVariants \
-		-V ${vcf_dir}/${inputs["cohort_id"]}.isec/0001.vcf 1>> ${tmp_prefix}${inputs["cohort_id"]}.isec \
+		-V ${vcf_dir}/${inputs["cohort_id"]}.isec/0001.vcf 1>> ${inputs['tmp_prefix']}${inputs["cohort_id"]}.isec \
 		2>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
 		|| { echo "...failed!"; return 1; }
 	$gatk CountVariants \
-		-V ${vcf_dir}/${inputs["cohort_id"]}.isec/0002.vcf 1>> ${tmp_prefix}${inputs["cohort_id"]}.isec \
+		-V ${vcf_dir}/${inputs["cohort_id"]}.isec/0002.vcf 1>> ${inputs['tmp_prefix']}${inputs["cohort_id"]}.isec \
 		2>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
 		|| { echo "...failed!"; return 1; }
 	$gatk CountVariants \
-		-V ${vcf_dir}/${inputs["cohort_id"]}.isec/0003.vcf 1>> ${tmp_prefix}${inputs["cohort_id"]}.isec \
+		-V ${vcf_dir}/${inputs["cohort_id"]}.isec/0003.vcf 1>> ${inputs['tmp_prefix']}${inputs["cohort_id"]}.isec \
 		2>> ${inputs["log_prefix"]}${inputs["cohort_id"]}.log \
 		|| { echo "...failed!"; return 1; }
 
 	myresult=$(python $jaccard \
-		--input ${tmp_prefix}${inputs["cohort_id"]}.isec)
+		--input ${inputs['tmp_prefix']}${inputs["cohort_id"]}.isec)
 
 	eval $__resultvar="'$myresult'"
 

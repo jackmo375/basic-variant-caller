@@ -1,5 +1,5 @@
 {
-  "runs_per_pipeline": 20,
+  "runs_per_pipeline": 4,
   "cohort_id": "c_1",
   "simulate_id": "simulate-cohort",
   "simulate_inputs_id": "basic",

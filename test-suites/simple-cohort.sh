@@ -22,7 +22,7 @@ workflow () {
 		argv=("$@") \
 		jacc_value='NULL'
 
-	declare -A inputs=( ["input_json"]=${argv[0]} ["log_prefix"]=${argv[1]})
+	declare -A inputs=( ["input_json"]=${argv[0]} ["log_prefix"]=${argv[1]} ['tmp_prefix']=${argv[2]} )
 
 	custom_call check_input_json "checking test suite input json file was provided..."
 
@@ -32,6 +32,7 @@ workflow () {
 	${pip_dir}/${inputs["simulate_id"]}.sh \
 		${pip_dir}/${inputs["simulate_id"]}.${inputs["simulate_inputs_id"]}.json \
 		${inputs["log_prefix"]} \
+		${inputs['tmp_prefix']} \
 		|| { echo 'test suite ERROR: simulating step failed'; exit 1; }
 
 	# 2. run the pipeline and time it:
@@ -39,6 +40,7 @@ workflow () {
 	${pip_dir}/${inputs["pipeline_id"]}.sh \
 		${pip_dir}/${inputs["pipeline_id"]}.${inputs["pipeline_inputs_id"]}.json \
 		${inputs["log_prefix"]} \
+		${inputs['tmp_prefix']} \
 		|| { echo 'test suite ERROR: pipeline step failed'; exit 1; }
 	END=$(date +%s.%N)
 	DIFF=$(echo "$END - $START" | bc)
@@ -53,12 +55,8 @@ workflow () {
 	echo "  Jaccard value: $jacc_value"
 	echo "  pipeline runtime: $DIFF seconds"
 
+	custom_call clean_temp "removing all temporary files..."
 }
-
-
-#
-#  tasks
-#
 
 
 #

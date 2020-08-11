@@ -97,14 +97,26 @@ run_in_parallel() {
 				|| return 1
 }
 
-set_up_log_directory() {
-	local cohort_log_file
+set_up_tmps_and_logs() {
+	local \
+		cohort_log_file \
+		id=$(random_id)
 	
 	if [[ -z ${inputs["log_prefix"]} ]]; then
-		inputs["log_prefix"]=${log_dir}/$(random_id)/ && mkdir ${inputs["log_prefix"]}
+		inputs["log_prefix"]=${log_dir}/${id}/ && mkdir ${inputs["log_prefix"]}
 		# create cohort log file
 		cohort_log_file=${inputs["log_prefix"]}${inputs["cohort_id"]}.log
 		[[ -s $cohort_log_file ]] || > $cohort_log_file
 		echo "==> output logs will be saved to ${inputs["log_prefix"]}"
 	fi
+
+	if [[ -z ${inputs["tmp_prefix"]} ]]; then
+		inputs["tmp_prefix"]=${tmp_dir}/${id}/ && mkdir ${inputs['tmp_prefix']}
+		echo "==> temp. files will be saved to ${inputs["tmp_prefix"]}"
+	fi
+}
+
+clean_temp() {
+	rm ${inputs['tmp_prefix']}* 2> /dev/null
+	rm -r ${inputs['tmp_prefix']} 2> /dev/null
 }
