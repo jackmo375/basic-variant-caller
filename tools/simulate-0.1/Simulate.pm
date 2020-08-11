@@ -61,7 +61,8 @@ sub initialize_parameters {
 		findel		=> 0.0005, 	# fraction of indels wrt original sequence length
 		nrearr_av	=> 3,		# number of small dna rearrangements (an average value for a distribution)
 
-		output_vcf	=> 'truth.vcf'	# output filename of truth vcf file
+		output_vcf	=> 'truth.vcf',	# output filename of truth vcf file
+		cohort_id   => '_'
 	);
 
 	# update values with command line arguments
@@ -80,7 +81,8 @@ sub initialize_parameters {
 		"unpaired"          => sub { $inputs{paired} = 0; },
 		"reads_prefix=s"          => \$inputs{prefix},
 		"input_json=s" 		=> \$inputs{input_json},
-		"output_vcf=s"		=> \$inputs{output_vcf}
+		"output_vcf=s"		=> \$inputs{output_vcf},
+		"cohort_id=s"		=> \$inputs{cohort_id}
 	) || die "Bad option";
 
 	# update values with input json file arguments
@@ -101,6 +103,7 @@ sub initialize_parameters {
 	$inputs{nreads}		= $from_json->{nreads}		if exists $from_json->{nreads};
 	$inputs{rdlen_av}	= $from_json->{rdlen_av}	if exists $from_json->{rdlen_av};
 	$inputs{rdlen_min}	= $from_json->{rdlen_min}	if exists $from_json->{rdlen_min};
+	$inputs{cohort_id}	= $from_json->{cohort_id}	if exists $from_json->{cohort_id};
 
 	if($inputs{long}) {
 		$inputs{nreads}    = 6000;
@@ -148,7 +151,7 @@ sub print_reference_sequence {
 
 	open(OREF, ">$inputs->{out_ref_file}") || die;
 
-	print OREF ">gi|9626243|ref|NC_001416.1| cohort id , complete genome\n";
+	print OREF ">gi|9626243|ref|NC_001416.1| $inputs->{cohort_id}, complete genome\n";
 
 	print OREF "$_\n" for unpack '(A70)*', $$rf;
 

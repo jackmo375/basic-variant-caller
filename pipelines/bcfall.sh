@@ -27,7 +27,7 @@ workflow() {
 
 	custom_call initialize_inputs_hash "initializing pipeline input parameter values..."
 
-	#custom_call fq "checking read file quality..."
+	custom_call fq "checking read file quality..."
 
 	custom_call trim "trimming read files..."
 

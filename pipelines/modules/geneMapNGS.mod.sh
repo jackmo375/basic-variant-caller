@@ -353,7 +353,7 @@ _converting_sam_to_bam() {
 		"${inputs["threads"]}" \
 		"${log_file_sting}" \
 		|| { echo "...failed!"; return 1; } \
-		&& { echo "...done."; return 0; }
+		&& { echo "...done."; }
 
 	return $status
 }
@@ -380,7 +380,7 @@ _sorting_bam_files() {
 		"${inputs["threads"]}" \
 		"${log_file_sting}" \
 		|| { echo "...failed!"; return 1; } \
-		&& { echo "...done."; return 0; }
+		&& { echo "...done."; }
 
 	return $status
 }
@@ -407,7 +407,7 @@ _merge_bam_alignments() {
 		"${log_file_sting}" \
 		"${log_file_sting}" \
 		|| { echo "...failed!"; return 1; } \
-		&& { echo "...done."; return 0; }
+		&& { echo "...done."; }
 
 	return $status
 }
@@ -450,16 +450,6 @@ _mark_duplicates() {
 		line \
 		option_string \
 		status=0
-
-	# check if merge_bam_alignment step was skipped:
-	while read -r line; do
-		[[ "$line" == "#"* ]] && continue
-		sample_id=$(echo $line | awk '{print $3}')
-		if [[ ! -s ${bam_dir}/${sample_id}.merged.bam ]]; then
-			input_bam_stage='sorted'
-			break
-		fi
-	done < ${inputs["meta"]}
 
 	option_string="MarkDuplicates \
 		-I ${bam_dir}/${inputs["cohort_id"]}.{3}.${input_bam_stage}.bam \
@@ -861,7 +851,7 @@ function vqsr() {
 function bcfcall() {
 	local \
 		tmp_prefix=${tmp_dir}/$(random_id)_ \
-		input_bam_stage='realigned'
+		input_bam_stage='marked'
 
 	prep_bamlist $tmp_prefix $input_bam_stage || return 1
 
@@ -1151,7 +1141,7 @@ function prep_bamlist() {
 	else
 		samples=$(sed '/^#/d' ${inputs["meta"]} | awk '{print $3}')
 		for i in ${samples[@]}; do
-			echo -e "$i\t$i.${input_bam_stage}.bam"
+			echo -e "$i\t${inputs["cohort_id"]}.$i.${input_bam_stage}.bam"
 		done > ${tmp_prefix}bam.list
 	fi
 
