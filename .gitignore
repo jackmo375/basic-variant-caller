@@ -1,5 +1,6 @@
 temp
 data
+docs/site
 
 tools/trimmomatic*
 tools/bcftools*
